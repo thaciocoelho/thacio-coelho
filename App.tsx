@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 import { 
   LayoutDashboard, 
   Users, 
@@ -12,7 +12,19 @@ import {
   ChevronLeft,
   ChevronRight,
   Filter,
-  Download
+  Download,
+  Edit2,
+  Trash2,
+  Camera,
+  Film,
+  Scissors,
+  Plane,
+  PlayCircle,
+  MinusCircle,
+  CheckCircle2,
+  XCircle,
+  RefreshCw,
+  Clock
 } from 'lucide-react';
 import { 
   Employee, 
@@ -22,13 +34,16 @@ import {
   ViewTab, 
   EmployeeStatus, 
   WarningType,
-  PeriodFilter
+  PeriodFilter,
+  Assignment,
+  AssignmentStatus
 } from './types';
 import { 
   INITIAL_EMPLOYEES, 
   INITIAL_SCALE, 
   INITIAL_ABSENCES, 
-  INITIAL_WARNINGS 
+  INITIAL_WARNINGS,
+  SERVICE_TYPES
 } from './constants';
 import { 
   BarChart, 
@@ -40,7 +55,7 @@ import {
   ResponsiveContainer, 
   Cell 
 } from 'recharts';
-import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, addMonths, subMonths, isWithinInterval, startOfDay, endOfDay, startOfWeek, endOfWeek } from 'date-fns';
+import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, addMonths, isWithinInterval, startOfDay, endOfDay, startOfWeek, endOfWeek } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
 // --- Components ---
@@ -54,18 +69,21 @@ const Card: React.FC<{ children: React.ReactNode, className?: string }> = ({ chi
 const Button: React.FC<{ 
   children: React.ReactNode, 
   onClick?: () => void, 
-  variant?: 'primary' | 'secondary' | 'danger' | 'ghost',
+  variant?: 'primary' | 'secondary' | 'danger' | 'ghost' | 'warning',
   className?: string,
-  disabled?: boolean
-}> = ({ children, onClick, variant = 'primary', className = "", disabled }) => {
+  disabled?: boolean,
+  type?: 'button' | 'submit'
+}> = ({ children, onClick, variant = 'primary', className = "", disabled, type = 'button' }) => {
   const variants = {
     primary: 'bg-blue-600 text-white active:bg-blue-700',
     secondary: 'bg-slate-100 text-slate-700 active:bg-slate-200',
     danger: 'bg-red-500 text-white active:bg-red-600',
+    warning: 'bg-amber-500 text-white active:bg-amber-600',
     ghost: 'bg-transparent text-slate-600 active:bg-slate-50'
   };
   return (
     <button 
+      type={type}
       disabled={disabled}
       onClick={onClick}
       className={`px-4 py-2 rounded-xl font-medium transition-all flex items-center justify-center gap-2 disabled:opacity-50 ${variants[variant]} ${className}`}
@@ -94,6 +112,38 @@ const Modal: React.FC<{ title: string, isOpen: boolean, onClose: () => void, chi
   );
 };
 
+const getServiceIcon = (service: string) => {
+  switch (service) {
+    case 'Fotos': return <Camera className="w-4 h-4" />;
+    case 'Vídeo sem edição': return <Film className="w-4 h-4" />;
+    case 'Edição': return <Scissors className="w-4 h-4" />;
+    case 'Vídeo Drone': return <Plane className="w-4 h-4" />;
+    case 'Vídeo completo': return <PlayCircle className="w-4 h-4" />;
+    case 'Nenhum serviço': return <MinusCircle className="w-4 h-4 text-slate-400" />;
+    default: return <ClipboardList className="w-4 h-4" />;
+  }
+};
+
+const StatusBadge: React.FC<{ status: AssignmentStatus }> = ({ status }) => {
+  const styles = {
+    [AssignmentStatus.COMPLETED]: 'bg-emerald-50 text-emerald-600 border-emerald-100',
+    [AssignmentStatus.CANCELLED]: 'bg-red-50 text-red-600 border-red-100',
+    [AssignmentStatus.RESCHEDULED]: 'bg-amber-50 text-amber-600 border-amber-100',
+    [AssignmentStatus.PENDING]: 'bg-slate-50 text-slate-500 border-slate-100',
+  };
+  const Icons = {
+    [AssignmentStatus.COMPLETED]: <CheckCircle2 className="w-3 h-3" />,
+    [AssignmentStatus.CANCELLED]: <XCircle className="w-3 h-3" />,
+    [AssignmentStatus.RESCHEDULED]: <RefreshCw className="w-3 h-3" />,
+    [AssignmentStatus.PENDING]: <Clock className="w-3 h-3" />,
+  };
+  return (
+    <span className={`flex items-center gap-1 text-[10px] font-bold border px-2 py-0.5 rounded-full uppercase ${styles[status]}`}>
+      {Icons[status]} {status}
+    </span>
+  );
+};
+
 // --- App Main ---
 
 export default function App() {
@@ -105,10 +155,15 @@ export default function App() {
   
   // States for Modals
   const [isEmployeeModalOpen, setIsEmployeeModalOpen] = useState(false);
+  const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
+  
   const [isScaleModalOpen, setIsScaleModalOpen] = useState(false);
   const [isAbsenceModalOpen, setIsAbsenceModalOpen] = useState(false);
   const [isWarningModalOpen, setIsWarningModalOpen] = useState(false);
   
+  // Form State for Assignments
+  const [formAssignments, setFormAssignments] = useState<Record<string, { checked: boolean, serviceType: string, status: AssignmentStatus, justification: string }>>({});
+
   // Date states for Scale
   const [selectedMonth, setSelectedMonth] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(new Date());
@@ -124,22 +179,24 @@ export default function App() {
       case 'daily': return { start: startOfDay(today), end: endOfDay(today) };
       case 'weekly': return { start: startOfWeek(today), end: endOfWeek(today) };
       case 'monthly': return { start: startOfMonth(today), end: endOfMonth(today) };
-      default: return { start: subMonths(today, 1), end: today };
+      default: return { start: addMonths(today, -1), end: today };
     }
   }, [period]);
 
   const stats = useMemo(() => {
     const activeEmpCount = employees.filter(e => e.status === EmployeeStatus.ACTIVE).length;
-    const filteredScale = scale.filter(s => isWithinInterval(new Date(s.date), currentRange));
-    const totalServices = filteredScale.reduce((acc, curr) => acc + curr.employeeIds.length, 0);
-    const filteredAbsences = absences.filter(a => isWithinInterval(new Date(a.date), currentRange)).length;
-    const filteredWarnings = warnings.filter(w => isWithinInterval(new Date(w.date), currentRange)).length;
+    const filteredScale = scale.filter(s => isWithinInterval(new Date(s.date + 'T12:00:00'), currentRange));
+    const totalServices = filteredScale.reduce((acc, curr) => 
+      acc + curr.assignments.filter(a => a.serviceType !== 'Nenhum serviço' && a.status === AssignmentStatus.COMPLETED).length, 0);
+    const filteredAbsences = absences.filter(a => isWithinInterval(new Date(a.date + 'T12:00:00'), currentRange)).length;
+    const filteredWarnings = warnings.filter(w => isWithinInterval(new Date(w.date + 'T12:00:00'), currentRange)).length;
 
-    // Services per employee
     const servicesMap: Record<string, number> = {};
     filteredScale.forEach(s => {
-      s.employeeIds.forEach(id => {
-        servicesMap[id] = (servicesMap[id] || 0) + 1;
+      s.assignments.forEach(asg => {
+        if (asg.serviceType !== 'Nenhum serviço' && asg.status === AssignmentStatus.COMPLETED) {
+          servicesMap[asg.employeeId] = (servicesMap[asg.employeeId] || 0) + 1;
+        }
       });
     });
 
@@ -156,34 +213,73 @@ export default function App() {
 
   // --- Handlers ---
 
-  const handleAddEmployee = (e: React.FormEvent<HTMLFormElement>) => {
+  const handleSaveEmployee = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
-    const newEmp: Employee = {
-      id: Math.random().toString(36).substr(2, 9),
+    const employeeData = {
       name: formData.get('name') as string,
       position: formData.get('position') as string,
       admissionDate: formData.get('admissionDate') as string,
-      status: EmployeeStatus.ACTIVE,
+      status: formData.get('status') as EmployeeStatus || EmployeeStatus.ACTIVE,
       notes: formData.get('notes') as string,
     };
-    setEmployees([...employees, newEmp]);
+
+    if (editingEmployee) {
+      setEmployees(employees.map(emp => emp.id === editingEmployee.id ? { ...emp, ...employeeData } : emp));
+    } else {
+      const newEmp: Employee = { id: Math.random().toString(36).substr(2, 9), ...employeeData };
+      setEmployees([...employees, newEmp]);
+    }
     setIsEmployeeModalOpen(false);
+    setEditingEmployee(null);
+  };
+
+  const handleEditEmployee = (emp: Employee) => {
+    setEditingEmployee(emp);
+    setIsEmployeeModalOpen(true);
+  };
+
+  const handleDeleteEmployee = (id: string) => {
+    if (confirm('Deseja realmente excluir este funcionário?')) {
+      setEmployees(employees.filter(emp => emp.id !== id));
+    }
+  };
+
+  const openScaleModal = () => {
+    const existingScale = scale.find(s => s.date === format(selectedDate, 'yyyy-MM-dd'));
+    const initialFormState: Record<string, { checked: boolean, serviceType: string, status: AssignmentStatus, justification: string }> = {};
+    employees.forEach(emp => {
+      const asg = existingScale?.assignments.find(a => a.employeeId === emp.id);
+      initialFormState[emp.id] = {
+        checked: !!asg,
+        serviceType: asg?.serviceType || 'Nenhum serviço',
+        status: asg?.status || AssignmentStatus.PENDING,
+        justification: asg?.justification || ''
+      };
+    });
+    setFormAssignments(initialFormState);
+    setIsScaleModalOpen(true);
   };
 
   const handleSaveScale = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    const formData = new FormData(e.currentTarget);
-    const date = formData.get('date') as string;
-    const selectedIds = Array.from(formData.getAll('employeeIds')) as string[];
+    const date = format(selectedDate, 'yyyy-MM-dd');
+    const assignments: Assignment[] = (Object.entries(formAssignments) as [string, { checked: boolean, serviceType: string, status: AssignmentStatus, justification: string }][])
+      .filter(([_, val]) => val.checked)
+      .map(([empId, val]) => ({
+        employeeId: empId,
+        serviceType: val.serviceType,
+        status: val.serviceType === 'Nenhum serviço' ? AssignmentStatus.PENDING : val.status,
+        justification: val.serviceType === 'Nenhum serviço' ? '' : val.justification
+      }));
     
     const existingIndex = scale.findIndex(s => s.date === date);
     if (existingIndex >= 0) {
       const newScale = [...scale];
-      newScale[existingIndex] = { ...newScale[existingIndex], employeeIds: selectedIds };
+      newScale[existingIndex] = { ...newScale[existingIndex], assignments };
       setScale(newScale);
     } else {
-      setScale([...scale, { id: Math.random().toString(36).substr(2, 9), date, employeeIds: selectedIds }]);
+      setScale([...scale, { id: Math.random().toString(36).substr(2, 9), date, assignments }]);
     }
     setIsScaleModalOpen(false);
   };
@@ -224,19 +320,12 @@ export default function App() {
         <h2 className="text-2xl font-bold text-slate-800">Resumo Geral</h2>
         <div className="flex bg-white rounded-xl p-1 shadow-sm border border-slate-100">
           {(['daily', 'weekly', 'monthly'] as PeriodFilter[]).map((p) => (
-            <button
-              key={p}
-              onClick={() => setPeriod(p)}
-              className={`px-3 py-1.5 text-xs font-semibold rounded-lg capitalize transition-all ${
-                period === p ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'
-              }`}
-            >
+            <button key={p} onClick={() => setPeriod(p)} className={`px-3 py-1.5 text-xs font-semibold rounded-lg capitalize transition-all ${period === p ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}>
               {p === 'daily' ? 'Diário' : p === 'weekly' ? 'Semanal' : 'Mensal'}
             </button>
           ))}
         </div>
       </div>
-
       <div className="grid grid-cols-2 gap-4">
         <Card className="flex flex-col justify-between border-l-4 border-l-blue-500">
           <div className="text-slate-500 text-xs font-medium uppercase tracking-wider mb-1">Funcionários</div>
@@ -244,7 +333,7 @@ export default function App() {
           <div className="mt-2 text-[10px] text-blue-600 font-semibold bg-blue-50 px-2 py-0.5 rounded-full w-fit">Ativos agora</div>
         </Card>
         <Card className="flex flex-col justify-between border-l-4 border-l-emerald-500">
-          <div className="text-slate-500 text-xs font-medium uppercase tracking-wider mb-1">Serviços Realizados</div>
+          <div className="text-slate-500 text-xs font-medium uppercase tracking-wider mb-1">Concluídos</div>
           <div className="text-2xl font-bold text-slate-800">{stats.totalServices}</div>
           <div className="mt-2 text-[10px] text-emerald-600 font-semibold bg-emerald-50 px-2 py-0.5 rounded-full w-fit">No período</div>
         </Card>
@@ -259,20 +348,16 @@ export default function App() {
           <div className="mt-2 text-[10px] text-red-600 font-semibold bg-red-50 px-2 py-0.5 rounded-full w-fit">Emitidas</div>
         </Card>
       </div>
-
       <Card className="h-[300px]">
         <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
-          <BarChart3 className="w-4 h-4 text-blue-600" /> Top 5 Funcionários
+          <BarChart3 className="w-4 h-4 text-blue-600" /> Eficiência de Serviços
         </h3>
         <ResponsiveContainer width="100%" height="85%">
           <BarChart data={stats.topEmployees} layout="vertical">
             <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f5f9" />
             <XAxis type="number" hide />
             <YAxis dataKey="name" type="category" width={80} style={{ fontSize: '10px' }} stroke="#64748b" />
-            <Tooltip 
-              cursor={{ fill: 'transparent' }}
-              contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
-            />
+            <Tooltip cursor={{ fill: 'transparent' }} contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
             <Bar dataKey="count" radius={[0, 4, 4, 0]} barSize={20}>
               {stats.topEmployees.map((entry, index) => (
                 <Cell key={`cell-${index}`} fill={['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'][index % 5]} />
@@ -288,122 +373,75 @@ export default function App() {
     <div className="space-y-6 pb-24">
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-bold text-slate-800">Funcionários</h2>
-        <Button onClick={() => setIsEmployeeModalOpen(true)}>
-          <Plus className="w-4 h-4" /> Novo
-        </Button>
+        <Button onClick={() => { setEditingEmployee(null); setIsEmployeeModalOpen(true); }}><Plus className="w-4 h-4" /> Novo</Button>
       </div>
-      
       <div className="space-y-3">
         {employees.map(emp => (
-          <Card key={emp.id} className="group transition-all hover:shadow-md">
+          <Card key={emp.id} className="group transition-all hover:shadow-md relative overflow-hidden">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center font-bold text-lg">
-                  {emp.name.charAt(0)}
-                </div>
-                <div>
-                  <h4 className="font-bold text-slate-800">{emp.name}</h4>
-                  <p className="text-xs text-slate-500">{emp.position}</p>
-                </div>
+                <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center font-bold text-lg">{emp.name.charAt(0)}</div>
+                <div><h4 className="font-bold text-slate-800">{emp.name}</h4><p className="text-xs text-slate-500">{emp.position}</p></div>
               </div>
-              <div className="flex flex-col items-end gap-1">
-                <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${
-                  emp.status === EmployeeStatus.ACTIVE ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-500'
-                }`}>
-                  {emp.status}
-                </span>
-                <p className="text-[10px] text-slate-400">Admissão: {format(new Date(emp.admissionDate), 'dd/MM/yyyy')}</p>
+              <div className="flex flex-col items-end gap-2">
+                <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${emp.status === EmployeeStatus.ACTIVE ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-500'}`}>{emp.status}</span>
+                <div className="flex gap-2">
+                  <button onClick={() => handleEditEmployee(emp)} className="p-1.5 bg-slate-50 text-slate-400 hover:text-blue-600 rounded-lg transition-colors"><Edit2 className="w-4 h-4" /></button>
+                  <button onClick={() => handleDeleteEmployee(emp.id)} className="p-1.5 bg-slate-50 text-slate-400 hover:text-red-600 rounded-lg transition-colors"><Trash2 className="w-4 h-4" /></button>
+                </div>
               </div>
             </div>
-            {emp.notes && (
-              <div className="mt-3 pt-3 border-t border-slate-50 text-xs text-slate-500 italic">
-                "{emp.notes}"
-              </div>
-            )}
           </Card>
         ))}
       </div>
-
-      <Modal title="Novo Funcionário" isOpen={isEmployeeModalOpen} onClose={() => setIsEmployeeModalOpen(false)}>
-        <form onSubmit={handleAddEmployee} className="space-y-4">
+      <Modal title={editingEmployee ? "Editar Funcionário" : "Novo Funcionário"} isOpen={isEmployeeModalOpen} onClose={() => { setIsEmployeeModalOpen(false); setEditingEmployee(null); }}>
+        <form onSubmit={handleSaveEmployee} className="space-y-4">
           <div>
             <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Nome Completo</label>
-            <input name="name" required className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all" />
+            <input name="name" defaultValue={editingEmployee?.name} required className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm" />
           </div>
           <div>
-            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Cargo / Função</label>
-            <input name="position" required className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all" />
+            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Cargo</label>
+            <input name="position" defaultValue={editingEmployee?.position} required className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm" />
           </div>
           <div>
-            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Data de Admissão</label>
-            <input name="admissionDate" type="date" required className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all" />
+            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Data Admissão</label>
+            <input name="admissionDate" type="date" defaultValue={editingEmployee?.admissionDate} required className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm" />
           </div>
-          <div>
-            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Observações</label>
-            <textarea name="notes" rows={3} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all" />
-          </div>
-          <Button className="w-full py-4 text-base shadow-lg shadow-blue-500/20">Cadastrar</Button>
+          <Button type="submit" className="w-full py-4 text-base">{editingEmployee ? "Salvar Alterações" : "Cadastrar"}</Button>
         </form>
       </Modal>
     </div>
   );
 
   const renderScale = () => {
-    const days = eachDayOfInterval({
-      start: startOfMonth(selectedMonth),
-      end: endOfMonth(selectedMonth)
-    });
-
-    const isDayScheduled = (date: Date) => {
-      return scale.some(s => isSameDay(new Date(s.date + 'T00:00:00'), date));
-    };
+    const days = eachDayOfInterval({ start: startOfMonth(selectedMonth), end: endOfMonth(selectedMonth) });
+    const currentDayScale = scale.filter(s => isSameDay(new Date(s.date + 'T12:00:00'), selectedDate));
 
     return (
       <div className="space-y-6 pb-24">
         <div className="flex items-center justify-between">
           <h2 className="text-2xl font-bold text-slate-800">Escala Mensal</h2>
           <div className="flex gap-1 items-center bg-white rounded-xl shadow-sm border border-slate-100 p-1">
-            <button onClick={() => setSelectedMonth(subMonths(selectedMonth, 1))} className="p-1.5 hover:bg-slate-50 rounded-lg transition-colors">
-              <ChevronLeft className="w-5 h-5 text-slate-600" />
-            </button>
-            <span className="text-sm font-bold text-slate-800 min-w-[100px] text-center capitalize">
-              {format(selectedMonth, 'MMMM yyyy', { locale: ptBR })}
-            </span>
-            <button onClick={() => setSelectedMonth(addMonths(selectedMonth, 1))} className="p-1.5 hover:bg-slate-50 rounded-lg transition-colors">
-              <ChevronRight className="w-5 h-5 text-slate-600" />
-            </button>
+            <button onClick={() => setSelectedMonth(addMonths(selectedMonth, -1))} className="p-1.5 hover:bg-slate-50 rounded-lg transition-colors"><ChevronLeft className="w-5 h-5 text-slate-600" /></button>
+            <span className="text-sm font-bold text-slate-800 min-w-[100px] text-center capitalize">{format(selectedMonth, 'MMMM yyyy', { locale: ptBR })}</span>
+            <button onClick={() => setSelectedMonth(addMonths(selectedMonth, 1))} className="p-1.5 hover:bg-slate-50 rounded-lg transition-colors"><ChevronRight className="w-5 h-5 text-slate-600" /></button>
           </div>
         </div>
 
         <Card className="p-4">
           <div className="grid grid-cols-7 gap-2 mb-2">
-            {['D', 'S', 'T', 'Q', 'Q', 'S', 'S'].map((d, i) => (
-              <div key={i} className="text-center text-[10px] font-bold text-slate-400">{d}</div>
-            ))}
+            {['D', 'S', 'T', 'Q', 'Q', 'S', 'S'].map((d, i) => (<div key={i} className="text-center text-[10px] font-bold text-slate-400">{d}</div>))}
           </div>
           <div className="grid grid-cols-7 gap-2">
-            {/* Fillers for start of month */}
-            {Array.from({ length: startOfMonth(selectedMonth).getDay() }).map((_, i) => (
-              <div key={`fill-${i}`} />
-            ))}
+            {Array.from({ length: startOfMonth(selectedMonth).getDay() }).map((_, i) => (<div key={`fill-${i}`} />))}
             {days.map(day => {
-              const hasService = isDayScheduled(day);
+              const hasService = scale.some(s => isSameDay(new Date(s.date + 'T12:00:00'), day));
               const isSelected = isSameDay(day, selectedDate);
               return (
-                <button
-                  key={day.toISOString()}
-                  onClick={() => {
-                    setSelectedDate(day);
-                    setIsScaleModalOpen(true);
-                  }}
-                  className={`relative aspect-square rounded-xl flex items-center justify-center transition-all ${
-                    isSelected ? 'bg-blue-600 text-white ring-4 ring-blue-100' : 'bg-slate-50 text-slate-700 hover:bg-slate-100'
-                  }`}
-                >
+                <button key={day.toISOString()} onClick={() => setSelectedDate(day)} className={`relative aspect-square rounded-xl flex items-center justify-center transition-all ${isSelected ? 'bg-blue-600 text-white ring-4 ring-blue-100' : 'bg-slate-50 text-slate-700 hover:bg-slate-100'}`}>
                   <span className="text-xs font-bold">{format(day, 'd')}</span>
-                  {hasService && !isSelected && (
-                    <div className="absolute bottom-1 w-1 h-1 bg-emerald-500 rounded-full" />
-                  )}
+                  {hasService && !isSelected && (<div className="absolute bottom-1 w-1 h-1 bg-emerald-500 rounded-full" />)}
                 </button>
               );
             })}
@@ -411,61 +449,119 @@ export default function App() {
         </Card>
 
         <div className="space-y-4">
-          <h3 className="font-bold text-slate-800 text-lg">Resumo do Dia Escolhido</h3>
-          {scale.filter(s => isSameDay(new Date(s.date + 'T00:00:00'), selectedDate)).length > 0 ? (
-            scale.filter(s => isSameDay(new Date(s.date + 'T00:00:00'), selectedDate)).map(s => (
+          <div className="flex items-center justify-between">
+            <h3 className="font-bold text-slate-800 text-lg">Serviços do Dia</h3>
+            <Button onClick={openScaleModal} className="px-3 py-1.5 text-xs shadow-md shadow-emerald-500/10" variant="primary">
+              <Plus className="w-3.5 h-3.5" /> Adicionar / Editar
+            </Button>
+          </div>
+          <div className="text-xs font-medium text-slate-400 mb-2">{format(selectedDate, "EEEE, dd 'de' MMMM", { locale: ptBR })}</div>
+
+          {currentDayScale.length > 0 ? (
+            currentDayScale.map(s => (
               <div key={s.id} className="space-y-2">
-                {s.employeeIds.map(id => {
-                  const emp = employees.find(e => e.id === id);
+                {s.assignments.map(asg => {
+                  const emp = employees.find(e => e.id === asg.employeeId);
+                  const isNoService = asg.serviceType === 'Nenhum serviço';
                   return (
-                    <Card key={id} className="py-3">
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 bg-emerald-50 text-emerald-600 rounded-lg flex items-center justify-center font-bold text-xs">
-                          {emp?.name.charAt(0)}
+                    <Card key={asg.employeeId} className={`py-3 border-l-4 ${isNoService ? 'border-l-slate-300' : 'border-l-blue-500'}`}>
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold text-sm ${isNoService ? 'bg-slate-100 text-slate-400' : 'bg-blue-50 text-blue-600'}`}>
+                            {getServiceIcon(asg.serviceType)}
+                          </div>
+                          <div>
+                            <p className="text-sm font-bold text-slate-800">{emp?.name}</p>
+                            <p className={`text-[10px] font-black uppercase tracking-widest ${isNoService ? 'text-slate-400' : 'text-blue-600'}`}>{asg.serviceType}</p>
+                          </div>
                         </div>
-                        <div>
-                          <p className="text-sm font-bold text-slate-800">{emp?.name}</p>
-                          <p className="text-[10px] text-slate-500">{emp?.position}</p>
-                        </div>
+                        {!isNoService && <StatusBadge status={asg.status} />}
                       </div>
+                      {asg.justification && (
+                        <div className="mt-2 text-[10px] text-slate-500 bg-slate-50 p-1.5 rounded-lg italic">
+                          Justificativa: {asg.justification}
+                        </div>
+                      )}
                     </Card>
                   );
                 })}
               </div>
             ))
           ) : (
-            <div className="text-center py-12 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200">
-              <ClipboardList className="w-12 h-12 text-slate-300 mx-auto mb-2" />
-              <p className="text-slate-400 text-sm">Nenhum serviço agendado para este dia.</p>
-              <Button variant="ghost" className="mt-2 text-blue-600" onClick={() => setIsScaleModalOpen(true)}>Agendar agora</Button>
+            <div className="text-center py-10 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200">
+              <ClipboardList className="w-10 h-10 text-slate-300 mx-auto mb-2" />
+              <p className="text-slate-400 text-sm">Nenhum serviço agendado.</p>
             </div>
           )}
         </div>
 
-        <Modal title={`Escala: ${format(selectedDate, "dd 'de' MMMM", { locale: ptBR })}`} isOpen={isScaleModalOpen} onClose={() => setIsScaleModalOpen(false)}>
+        <Modal title={`Agendar: ${format(selectedDate, "dd/MM/yyyy")}`} isOpen={isScaleModalOpen} onClose={() => setIsScaleModalOpen(false)}>
           <form onSubmit={handleSaveScale} className="space-y-6">
-            <input type="hidden" name="date" value={format(selectedDate, 'yyyy-MM-dd')} />
-            <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">Selecione os Funcionários</label>
-              <div className="space-y-2">
-                {employees.filter(e => e.status === EmployeeStatus.ACTIVE).map(emp => (
-                  <label key={emp.id} className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl border border-slate-100 active:bg-slate-100 transition-colors">
-                    <input 
-                      type="checkbox" 
-                      name="employeeIds" 
-                      value={emp.id} 
-                      defaultChecked={scale.find(s => s.date === format(selectedDate, 'yyyy-MM-dd'))?.employeeIds.includes(emp.id)}
-                      className="w-5 h-5 rounded-lg border-slate-300 text-blue-600 focus:ring-blue-500"
-                    />
-                    <div>
-                      <p className="text-sm font-bold text-slate-800">{emp.name}</p>
-                      <p className="text-[10px] text-slate-500">{emp.position}</p>
+            <div className="space-y-4">
+              {employees.filter(e => e.status === EmployeeStatus.ACTIVE).map(emp => {
+                const val = formAssignments[emp.id] || { checked: false, serviceType: 'Nenhum serviço', status: AssignmentStatus.PENDING, justification: '' };
+                const isNoService = val.serviceType === 'Nenhum serviço';
+                const showJustification = !isNoService && (val.status === AssignmentStatus.CANCELLED || val.status === AssignmentStatus.RESCHEDULED);
+
+                return (
+                  <div key={emp.id} className="p-4 bg-slate-50 rounded-2xl border border-slate-100 space-y-3 transition-all">
+                    <div className="flex items-center gap-3">
+                      <input 
+                        type="checkbox" 
+                        checked={val.checked}
+                        onChange={(e) => setFormAssignments({ ...formAssignments, [emp.id]: { ...val, checked: e.target.checked }})}
+                        className="w-5 h-5 rounded-lg border-slate-300 text-blue-600 focus:ring-blue-500"
+                      />
+                      <div className="flex flex-col">
+                        <span className="text-sm font-bold text-slate-800">{emp.name}</span>
+                        <span className="text-[10px] text-slate-500">{emp.position}</span>
+                      </div>
                     </div>
-                  </label>
-                ))}
-              </div>
+                    {val.checked && (
+                      <div className="pl-8 space-y-3">
+                        <div className={`grid ${!isNoService ? 'grid-cols-2' : 'grid-cols-1'} gap-2`}>
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Serviço</label>
+                            <select 
+                              value={val.serviceType}
+                              onChange={(e) => setFormAssignments({ ...formAssignments, [emp.id]: { ...val, serviceType: e.target.value }})}
+                              className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs"
+                            >
+                              {SERVICE_TYPES.map(st => (<option key={st} value={st}>{st}</option>))}
+                            </select>
+                          </div>
+                          {!isNoService && (
+                            <div>
+                              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Status</label>
+                              <select 
+                                value={val.status}
+                                onChange={(e) => setFormAssignments({ ...formAssignments, [emp.id]: { ...val, status: e.target.value as AssignmentStatus }})}
+                                className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs"
+                              >
+                                {Object.values(AssignmentStatus).map(s => (<option key={s} value={s}>{s}</option>))}
+                              </select>
+                            </div>
+                          )}
+                        </div>
+                        {showJustification && (
+                          <div className="animate-in fade-in zoom-in-95 duration-200">
+                            <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Justificativa</label>
+                            <textarea 
+                              required={showJustification}
+                              value={val.justification}
+                              onChange={(e) => setFormAssignments({ ...formAssignments, [emp.id]: { ...val, justification: e.target.value }})}
+                              placeholder="Motivo do cancelamento ou reagendamento..."
+                              className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs h-16 resize-none"
+                            />
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
-            <Button className="w-full py-4 text-base">Salvar Escala</Button>
+            <Button type="submit" className="w-full py-4 text-base shadow-lg shadow-blue-500/20">Salvar Alterações</Button>
           </form>
         </Modal>
       </div>
@@ -477,29 +573,33 @@ export default function App() {
     return (
       <div className="space-y-6 pb-24">
         <h2 className="text-2xl font-bold text-slate-800">Controle de Serviços</h2>
-        <div className="space-y-4">
+        <div className="space-y-6">
           {sortedScale.map(item => (
             <div key={item.id}>
-              <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-2">
-                <CalendarDays className="w-3 h-3" /> {format(new Date(item.date + 'T00:00:00'), "EEEE, dd 'de' MMMM", { locale: ptBR })}
+              <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
+                <CalendarDays className="w-3 h-3" /> {format(new Date(item.date + 'T12:00:00'), "EEEE, dd 'de' MMMM", { locale: ptBR })}
               </div>
               <div className="space-y-2">
-                {item.employeeIds.map(empId => {
-                  const emp = employees.find(e => e.id === empId);
+                {item.assignments.map(asg => {
+                  const emp = employees.find(e => e.id === asg.employeeId);
+                  const isNoService = asg.serviceType === 'Nenhum serviço';
                   return (
-                    <Card key={empId} className="border-l-4 border-l-emerald-500">
+                    <Card key={asg.employeeId} className={`border-l-4 ${asg.status === AssignmentStatus.COMPLETED ? 'border-l-emerald-500' : asg.status === AssignmentStatus.CANCELLED ? 'border-l-red-500' : asg.status === AssignmentStatus.RESCHEDULED ? 'border-l-amber-500' : 'border-l-slate-300'}`}>
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 bg-emerald-50 text-emerald-600 rounded-xl flex items-center justify-center font-bold">
-                            {emp?.name.charAt(0)}
+                          <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold ${isNoService ? 'bg-slate-100 text-slate-400' : 'bg-slate-50 text-slate-600'}`}>
+                            {getServiceIcon(asg.serviceType)}
                           </div>
                           <div>
-                            <p className="font-bold text-slate-800">{emp?.name}</p>
-                            <p className="text-[10px] text-slate-500 uppercase">{emp?.position}</p>
+                            <p className="font-bold text-slate-800 text-sm">{emp?.name}</p>
+                            <p className="text-[10px] font-black uppercase tracking-tight text-slate-400">{asg.serviceType}</p>
                           </div>
                         </div>
-                        <span className="text-[10px] bg-emerald-100 text-emerald-700 px-2 py-1 rounded-full font-bold">REALIZADO</span>
+                        {!isNoService && <StatusBadge status={asg.status} />}
                       </div>
+                      {asg.justification && (
+                        <p className="mt-2 text-[10px] text-slate-500 italic px-2 py-1 bg-slate-50 rounded border border-slate-100">"{asg.justification}"</p>
+                      )}
                     </Card>
                   );
                 })}
@@ -515,120 +615,28 @@ export default function App() {
     <div className="space-y-6 pb-24">
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-bold text-slate-800 text-red-600">Faltas</h2>
-        <Button onClick={() => setIsAbsenceModalOpen(true)} variant="danger">
-          <Plus className="w-4 h-4" /> Registrar
-        </Button>
+        <Button onClick={() => setIsAbsenceModalOpen(true)} variant="danger"><Plus className="w-4 h-4" /> Registrar</Button>
       </div>
-
       <div className="space-y-4">
         {absences.sort((a, b) => b.date.localeCompare(a.date)).map(abs => {
           const emp = employees.find(e => e.id === abs.employeeId);
           return (
             <Card key={abs.id} className="border-l-4 border-l-red-500">
               <div className="flex justify-between items-start mb-2">
-                <div>
-                  <h4 className="font-bold text-slate-800">{emp?.name}</h4>
-                  <p className="text-xs text-slate-500">{format(new Date(abs.date + 'T00:00:00'), 'dd/MM/yyyy')}</p>
-                </div>
-                <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
-                  abs.justified ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'
-                }`}>
-                  {abs.justified ? 'JUSTIFICADA' : 'NÃO JUSTIFICADA'}
-                </span>
+                <div><h4 className="font-bold text-slate-800">{emp?.name}</h4><p className="text-xs text-slate-500">{format(new Date(abs.date + 'T12:00:00'), 'dd/MM/yyyy')}</p></div>
+                <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${abs.justified ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'}`}>{abs.justified ? 'JUSTIFICADA' : 'NÃO JUSTIFICADA'}</span>
               </div>
-              <p className="text-sm text-slate-600 bg-slate-50 p-2 rounded-lg italic">"{abs.reason}"</p>
+              <p className="text-sm text-slate-600 italic bg-slate-50 p-2 rounded-lg">"{abs.reason}"</p>
             </Card>
           );
         })}
       </div>
-
-      <Modal title="Registrar Falta" isOpen={isAbsenceModalOpen} onClose={() => setIsAbsenceModalOpen(false)}>
-        <form onSubmit={handleAddAbsence} className="space-y-4">
-          <div>
-            <label className="block text-xs font-bold text-slate-500 mb-1">Funcionário</label>
-            <select name="employeeId" required className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm">
-              {employees.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="block text-xs font-bold text-slate-500 mb-1">Data</label>
-            <input name="date" type="date" required className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm" />
-          </div>
-          <div>
-            <label className="block text-xs font-bold text-slate-500 mb-1">Motivo</label>
-            <textarea name="reason" rows={2} required className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm" />
-          </div>
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input type="checkbox" name="justified" className="w-4 h-4 rounded border-slate-300" />
-            <span className="text-sm font-medium text-slate-700">Falta Justificada?</span>
-          </label>
-          <Button variant="danger" className="w-full py-4 text-base">Salvar Registro</Button>
-        </form>
-      </Modal>
-    </div>
-  );
-
-  const renderWarnings = () => (
-    <div className="space-y-6 pb-24">
-      <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold text-slate-800 text-amber-600">Advertências</h2>
-        <Button onClick={() => setIsWarningModalOpen(true)} className="bg-amber-500 hover:bg-amber-600">
-          <Plus className="w-4 h-4" /> Registrar
-        </Button>
-      </div>
-
-      <div className="space-y-4">
-        {warnings.sort((a, b) => b.date.localeCompare(a.date)).map(warn => {
-          const emp = employees.find(e => e.id === warn.employeeId);
-          return (
-            <Card key={warn.id} className="border-l-4 border-l-amber-500">
-              <div className="flex justify-between items-start mb-2">
-                <div>
-                  <h4 className="font-bold text-slate-800">{emp?.name}</h4>
-                  <p className="text-xs text-slate-500">{format(new Date(warn.date + 'T00:00:00'), 'dd/MM/yyyy')}</p>
-                </div>
-                <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-amber-100 text-amber-700 uppercase">
-                  {warn.type}
-                </span>
-              </div>
-              <p className="text-sm text-slate-600 bg-slate-50 p-2 rounded-lg italic">"{warn.reason}"</p>
-            </Card>
-          );
-        })}
-      </div>
-
-      <Modal title="Registrar Advertência" isOpen={isWarningModalOpen} onClose={() => setIsWarningModalOpen(false)}>
-        <form onSubmit={handleAddWarning} className="space-y-4">
-          <div>
-            <label className="block text-xs font-bold text-slate-500 mb-1">Funcionário</label>
-            <select name="employeeId" required className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm">
-              {employees.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="block text-xs font-bold text-slate-500 mb-1">Tipo</label>
-            <select name="type" required className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm">
-              {Object.values(WarningType).map(v => <option key={v} value={v}>{v}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="block text-xs font-bold text-slate-500 mb-1">Data</label>
-            <input name="date" type="date" required className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm" />
-          </div>
-          <div>
-            <label className="block text-xs font-bold text-slate-500 mb-1">Motivo / Descrição</label>
-            <textarea name="reason" rows={3} required className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm" />
-          </div>
-          <Button className="w-full py-4 text-base bg-amber-500 hover:bg-amber-600">Emitir Advertência</Button>
-        </form>
-      </Modal>
     </div>
   );
 
   const renderReports = () => {
-    // Basic aggregation for reports
     const reportData = employees.map(emp => {
-      const services = scale.reduce((acc, curr) => acc + (curr.employeeIds.includes(emp.id) ? 1 : 0), 0);
+      const services = scale.reduce((acc, curr) => acc + (curr.assignments.some(a => a.employeeId === emp.id && a.status === AssignmentStatus.COMPLETED && a.serviceType !== 'Nenhum serviço') ? 1 : 0), 0);
       const absCount = absences.filter(a => a.employeeId === emp.id).length;
       const warnCount = warnings.filter(w => w.employeeId === emp.id).length;
       return { ...emp, services, absCount, warnCount };
@@ -638,19 +646,15 @@ export default function App() {
       <div className="space-y-6 pb-24">
         <div className="flex items-center justify-between">
           <h2 className="text-2xl font-bold text-slate-800">Relatórios</h2>
-          <Button variant="secondary" className="text-xs">
-            <Download className="w-4 h-4" /> Exportar PDF
-          </Button>
+          <Button variant="secondary" className="text-xs"><Download className="w-4 h-4" /> Exportar</Button>
         </div>
-
         <Card className="overflow-x-auto no-scrollbar">
           <table className="w-full text-left text-sm">
             <thead>
               <tr className="border-b border-slate-100">
                 <th className="py-3 px-2 font-bold text-slate-400 uppercase text-[10px]">Funcionário</th>
-                <th className="py-3 px-2 font-bold text-slate-400 uppercase text-[10px] text-center">Serviços</th>
+                <th className="py-3 px-2 font-bold text-slate-400 uppercase text-[10px] text-center">Concluídos</th>
                 <th className="py-3 px-2 font-bold text-slate-400 uppercase text-[10px] text-center">Faltas</th>
-                <th className="py-3 px-2 font-bold text-slate-400 uppercase text-[10px] text-center">Adv.</th>
               </tr>
             </thead>
             <tbody>
@@ -660,27 +664,13 @@ export default function App() {
                     <p className="font-bold text-slate-800 leading-tight">{data.name}</p>
                     <p className="text-[10px] text-slate-400">{data.position}</p>
                   </td>
-                  <td className="py-4 px-2 text-center font-bold text-blue-600">{data.services}</td>
+                  <td className="py-4 px-2 text-center font-bold text-emerald-600">{data.services}</td>
                   <td className="py-4 px-2 text-center font-bold text-red-500">{data.absCount}</td>
-                  <td className="py-4 px-2 text-center font-bold text-amber-500">{data.warnCount}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </Card>
-
-        <div className="grid grid-cols-1 gap-4">
-          <Card className="bg-gradient-to-br from-blue-600 to-indigo-700 text-white border-0">
-            <h4 className="font-bold mb-1 opacity-90">Eficiência Geral</h4>
-            <div className="text-3xl font-bold">94.2%</div>
-            <p className="text-xs opacity-70 mt-1">Baseado na relação serviços vs faltas</p>
-          </Card>
-          <Card className="bg-gradient-to-br from-emerald-500 to-teal-600 text-white border-0">
-            <h4 className="font-bold mb-1 opacity-90">Engajamento Semanal</h4>
-            <div className="text-3xl font-bold">+12%</div>
-            <p className="text-xs opacity-70 mt-1">Crescimento em relação à semana anterior</p>
-          </Card>
-        </div>
       </div>
     );
   };
@@ -689,54 +679,30 @@ export default function App() {
     { id: 'dashboard', label: 'Início', icon: <LayoutDashboard className="w-6 h-6" /> },
     { id: 'employees', label: 'Equipe', icon: <Users className="w-6 h-6" /> },
     { id: 'scale', label: 'Escala', icon: <CalendarDays className="w-6 h-6" /> },
-    { id: 'absences', label: 'Faltas', icon: <UserX className="w-6 h-6" /> },
+    { id: 'services', label: 'Serviços', icon: <ClipboardList className="w-6 h-6" /> },
     { id: 'reports', label: 'Relatórios', icon: <BarChart3 className="w-6 h-6" /> }
   ];
 
   return (
     <div className="min-h-screen max-w-md mx-auto relative bg-slate-50 flex flex-col">
-      {/* Top Header */}
       <header className="sticky top-0 z-30 bg-slate-50/80 backdrop-blur-md px-6 py-4 flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center shadow-lg shadow-blue-500/30">
-            <ClipboardList className="text-white w-6 h-6" />
-          </div>
+          <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center shadow-lg shadow-blue-500/30"><ClipboardList className="text-white w-6 h-6" /></div>
           <h1 className="text-lg font-black text-slate-800 tracking-tight">GESTOR<span className="text-blue-600">PRO</span></h1>
         </div>
-        <div className="w-10 h-10 bg-white border border-slate-100 rounded-full flex items-center justify-center shadow-sm">
-          <span className="text-xs font-black text-blue-600">ADM</span>
-        </div>
       </header>
-
-      {/* Main Content */}
       <main className="flex-1 px-6 pt-2">
         {activeTab === 'dashboard' && renderDashboard()}
         {activeTab === 'employees' && renderEmployees()}
         {activeTab === 'scale' && renderScale()}
-        {activeTab === 'absences' && (
-          <div className="space-y-8">
-            {renderAbsences()}
-            {renderWarnings()}
-          </div>
-        )}
+        {activeTab === 'services' && renderServices()}
         {activeTab === 'reports' && renderReports()}
       </main>
-
-      {/* Bottom Navigation */}
       <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white/90 backdrop-blur-lg border-t border-slate-100 safe-bottom z-40">
         <div className="flex justify-around items-center px-2 py-3">
           {tabs.map(tab => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`flex flex-col items-center gap-1 transition-all px-4 py-1 rounded-2xl ${
-                activeTab === tab.id ? 'text-blue-600 bg-blue-50' : 'text-slate-400 hover:text-slate-600'
-              }`}
-            >
-              {tab.icon}
-              <span className={`text-[10px] font-bold ${activeTab === tab.id ? 'opacity-100' : 'opacity-80'}`}>
-                {tab.label}
-              </span>
+            <button key={tab.id} onClick={() => setActiveTab(tab.id)} className={`flex flex-col items-center gap-1 transition-all px-4 py-1 rounded-2xl ${activeTab === tab.id ? 'text-blue-600 bg-blue-50' : 'text-slate-400 hover:text-slate-600'}`}>
+              {tab.icon}<span className={`text-[10px] font-bold ${activeTab === tab.id ? 'opacity-100' : 'opacity-80'}`}>{tab.label}</span>
             </button>
           ))}
         </div>

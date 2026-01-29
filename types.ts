@@ -4,6 +4,13 @@ export enum EmployeeStatus {
   INACTIVE = 'Inativo'
 }
 
+export enum AssignmentStatus {
+  COMPLETED = 'Concluído',
+  CANCELLED = 'Cancelado',
+  RESCHEDULED = 'Reagendado',
+  PENDING = 'Pendente'
+}
+
 export interface Employee {
   id: string;
   name: string;
@@ -13,10 +20,17 @@ export interface Employee {
   notes: string;
 }
 
+export interface Assignment {
+  employeeId: string;
+  serviceType: string;
+  status: AssignmentStatus;
+  justification?: string;
+}
+
 export interface ScaleItem {
   id: string;
   date: string; // ISO format YYYY-MM-DD
-  employeeIds: string[];
+  assignments: Assignment[];
 }
 
 export interface Absence {
