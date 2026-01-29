@@ -25,6 +25,7 @@ export interface Assignment {
   serviceType: string;
   status: AssignmentStatus;
   justification?: string;
+  description?: string;
 }
 
 export interface ScaleItem {

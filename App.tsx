@@ -1,4 +1,3 @@
-
 import React, { useState, useMemo, useEffect } from 'react';
 import { 
   LayoutDashboard, 
@@ -23,7 +22,9 @@ import {
   XCircle,
   RefreshCw,
   Clock,
-  PieChart as PieChartIcon
+  PieChart as PieChartIcon,
+  AlignLeft,
+  UserPlus
 } from 'lucide-react';
 import { 
   Employee, 
@@ -81,6 +82,10 @@ const KEYS = {
   ABSENCES: 'absences',
   WARNINGS: 'warnings'
 };
+
+interface FormAssignment extends Assignment {
+  tempId: string;
+}
 
 // --- Components ---
 
@@ -173,25 +178,19 @@ const StatusBadge: React.FC<{ status: AssignmentStatus }> = ({ status }) => {
 export default function App() {
   const [activeTab, setActiveTab] = useState<ViewTab>('dashboard');
   
-  // Advanced Persistence Helper with Migration
+  // Persistence Helper
   const getStoredData = <T,>(key: string, defaultValue: T): T => {
     try {
       const currentKey = `${STORAGE_PREFIX}${key}`;
       const oldKey = `${OLD_PREFIX}${key}`;
-      
       const saved = localStorage.getItem(currentKey);
       if (saved) return JSON.parse(saved);
-      
-      // Migration Check: If no new data, check for old data
       const oldSaved = localStorage.getItem(oldKey);
       if (oldSaved) {
-        console.log(`Migrating data for key: ${key}`);
         const data = JSON.parse(oldSaved);
-        // Save to new location immediately
         localStorage.setItem(currentKey, oldSaved);
         return data;
       }
-      
       return defaultValue;
     } catch (e) {
       console.error(`Error loading ${key} from storage`, e);
@@ -199,37 +198,28 @@ export default function App() {
     }
   };
 
-  // State initialization
   const [employees, setEmployees] = useState<Employee[]>(() => getStoredData(KEYS.EMPLOYEES, INITIAL_EMPLOYEES));
   const [scale, setScale] = useState<ScaleItem[]>(() => getStoredData(KEYS.SCALE, INITIAL_SCALE));
   const [absences, setAbsences] = useState<Absence[]>(() => getStoredData(KEYS.ABSENCES, INITIAL_ABSENCES));
   const [warnings, setWarnings] = useState<Warning[]>(() => getStoredData(KEYS.WARNINGS, INITIAL_WARNINGS));
 
-  // Auto-sync effects
   useEffect(() => { localStorage.setItem(`${STORAGE_PREFIX}${KEYS.EMPLOYEES}`, JSON.stringify(employees)); }, [employees]);
   useEffect(() => { localStorage.setItem(`${STORAGE_PREFIX}${KEYS.SCALE}`, JSON.stringify(scale)); }, [scale]);
   useEffect(() => { localStorage.setItem(`${STORAGE_PREFIX}${KEYS.ABSENCES}`, JSON.stringify(absences)); }, [absences]);
   useEffect(() => { localStorage.setItem(`${STORAGE_PREFIX}${KEYS.WARNINGS}`, JSON.stringify(warnings)); }, [warnings]);
   
-  // States for Modals
   const [isEmployeeModalOpen, setIsEmployeeModalOpen] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
-  
   const [isScaleModalOpen, setIsScaleModalOpen] = useState(false);
   const [isAbsenceModalOpen, setIsAbsenceModalOpen] = useState(false);
   const [isWarningModalOpen, setIsWarningModalOpen] = useState(false);
   
-  // Form State for Assignments
-  const [formAssignments, setFormAssignments] = useState<Record<string, { checked: boolean, serviceType: string, status: AssignmentStatus, justification: string }>>({});
+  // Updated Scale Form State: Array of assignments
+  const [assignmentRows, setAssignmentRows] = useState<FormAssignment[]>([]);
 
-  // Date states for Scale
   const [selectedMonth, setSelectedMonth] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(new Date());
-
-  // Period filters
   const [period, setPeriod] = useState<PeriodFilter>('monthly');
-
-  // --- Derived Data ---
 
   const currentRange = useMemo(() => {
     const today = new Date();
@@ -270,8 +260,6 @@ export default function App() {
     return { activeEmpCount, totalServices, filteredAbsences, filteredWarnings, topEmployees, totalWorkDays: filteredScale.length };
   }, [employees, scale, absences, warnings, currentRange]);
 
-  // --- Handlers ---
-
   const handleSaveEmployee = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
@@ -279,10 +267,9 @@ export default function App() {
       name: formData.get('name') as string,
       position: formData.get('position') as string,
       admissionDate: formData.get('admissionDate') as string,
-      status: formData.get('status') as EmployeeStatus || EmployeeStatus.ACTIVE,
+      status: (formData.get('status') as EmployeeStatus) || EmployeeStatus.ACTIVE,
       notes: formData.get('notes') as string,
     };
-
     if (editingEmployee) {
       setEmployees(prev => prev.map(emp => emp.id === editingEmployee.id ? { ...emp, ...employeeData } : emp));
     } else {
@@ -293,6 +280,7 @@ export default function App() {
     setEditingEmployee(null);
   };
 
+  // Fix: Added missing handleEditEmployee function to resolve reference error on line 450
   const handleEditEmployee = (emp: Employee) => {
     setEditingEmployee(emp);
     setIsEmployeeModalOpen(true);
@@ -306,40 +294,57 @@ export default function App() {
 
   const openScaleModal = () => {
     const existingScale = scale.find(s => s.date === format(selectedDate, 'yyyy-MM-dd'));
-    const initialFormState: Record<string, { checked: boolean, serviceType: string, status: AssignmentStatus, justification: string }> = {};
-    employees.forEach(emp => {
-      const asg = existingScale?.assignments.find(a => a.employeeId === emp.id);
-      initialFormState[emp.id] = {
-        checked: !!asg,
-        serviceType: asg?.serviceType || 'Nenhum serviço',
-        status: asg?.status || AssignmentStatus.PENDING,
-        justification: asg?.justification || ''
-      };
-    });
-    setFormAssignments(initialFormState);
+    if (existingScale && existingScale.assignments.length > 0) {
+      setAssignmentRows(existingScale.assignments.map(asg => ({
+        ...asg,
+        tempId: Math.random().toString(36).substr(2, 9)
+      })));
+    } else {
+      // Start with one empty assignment if none exists
+      addAssignmentRow();
+    }
     setIsScaleModalOpen(true);
+  };
+
+  const addAssignmentRow = () => {
+    const firstActiveId = employees.find(e => e.status === EmployeeStatus.ACTIVE)?.id || '';
+    setAssignmentRows(prev => [...prev, {
+      tempId: Math.random().toString(36).substr(2, 9),
+      employeeId: firstActiveId,
+      serviceType: 'Fotos',
+      status: AssignmentStatus.PENDING,
+      justification: '',
+      description: ''
+    }]);
+  };
+
+  const updateAssignmentRow = (tempId: string, updates: Partial<FormAssignment>) => {
+    setAssignmentRows(prev => prev.map(row => row.tempId === tempId ? { ...row, ...updates } : row));
+  };
+
+  const removeAssignmentRow = (tempId: string) => {
+    setAssignmentRows(prev => prev.filter(row => row.tempId !== tempId));
   };
 
   const handleSaveScale = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const date = format(selectedDate, 'yyyy-MM-dd');
-    const assignments: Assignment[] = (Object.entries(formAssignments) as [string, { checked: boolean, serviceType: string, status: AssignmentStatus, justification: string }][])
-      .filter(([_, val]) => val.checked)
-      .map(([empId, val]) => ({
-        employeeId: empId,
-        serviceType: val.serviceType,
-        status: val.serviceType === 'Nenhum serviço' ? AssignmentStatus.PENDING : val.status,
-        justification: val.serviceType === 'Nenhum serviço' ? '' : val.justification
-      }));
+    
+    // Convert form rows back to Assignments (remove tempId)
+    const finalAssignments: Assignment[] = assignmentRows.map(({ tempId, ...rest }) => ({
+      ...rest,
+      // Status remains PENDING for "Nenhum serviço", but description/justification cleared
+      ...(rest.serviceType === 'Nenhum serviço' ? { status: AssignmentStatus.PENDING, justification: '', description: '' } : {})
+    }));
     
     setScale(prev => {
       const existingIndex = prev.findIndex(s => s.date === date);
       if (existingIndex >= 0) {
         const newScale = [...prev];
-        newScale[existingIndex] = { ...newScale[existingIndex], assignments };
+        newScale[existingIndex] = { ...newScale[existingIndex], assignments: finalAssignments };
         return newScale;
       } else {
-        return [...prev, { id: Math.random().toString(36).substr(2, 9), date, assignments }];
+        return [...prev, { id: Math.random().toString(36).substr(2, 9), date, assignments: finalAssignments }];
       }
     });
     setIsScaleModalOpen(false);
@@ -455,23 +460,6 @@ export default function App() {
           </Card>
         ))}
       </div>
-      <Modal title={editingEmployee ? "Editar Funcionário" : "Novo Funcionário"} isOpen={isEmployeeModalOpen} onClose={() => { setIsEmployeeModalOpen(false); setEditingEmployee(null); }}>
-        <form onSubmit={handleSaveEmployee} className="space-y-4">
-          <div>
-            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Nome Completo</label>
-            <input name="name" defaultValue={editingEmployee?.name} required className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm" />
-          </div>
-          <div>
-            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Cargo</label>
-            <input name="position" defaultValue={editingEmployee?.position} required className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm" />
-          </div>
-          <div>
-            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Data Admissão</label>
-            <input name="admissionDate" type="date" defaultValue={editingEmployee?.admissionDate} required className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm" />
-          </div>
-          <Button type="submit" className="w-full py-4 text-base">{editingEmployee ? "Salvar Alterações" : "Cadastrar"}</Button>
-        </form>
-      </Modal>
     </div>
   );
 
@@ -521,11 +509,11 @@ export default function App() {
           {currentDayScale.length > 0 ? (
             currentDayScale.map(s => (
               <div key={s.id} className="space-y-2">
-                {s.assignments.map(asg => {
+                {s.assignments.map((asg, idx) => {
                   const emp = employees.find(e => e.id === asg.employeeId);
                   const isNoService = asg.serviceType === 'Nenhum serviço';
                   return (
-                    <Card key={asg.employeeId} className={`py-3 border-l-4 ${isNoService ? 'border-l-slate-300' : 'border-l-blue-500'}`}>
+                    <Card key={`${asg.employeeId}-${idx}`} className={`py-3 border-l-4 ${isNoService ? 'border-l-slate-300' : 'border-l-blue-500'}`}>
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-3">
                           <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold text-sm ${isNoService ? 'bg-slate-100 text-slate-400' : 'bg-blue-50 text-blue-600'}`}>
@@ -538,8 +526,14 @@ export default function App() {
                         </div>
                         {!isNoService && <StatusBadge status={asg.status} />}
                       </div>
+                      {asg.description && (
+                        <div className="mt-2 text-[10px] text-slate-500 bg-slate-50 p-2 rounded-lg border border-slate-100 flex items-start gap-1.5">
+                          <AlignLeft className="w-3 h-3 mt-0.5 shrink-0 opacity-50" />
+                          <p className="leading-relaxed">{asg.description}</p>
+                        </div>
+                      )}
                       {asg.justification && (
-                        <div className="mt-2 text-[10px] text-slate-500 bg-slate-50 p-1.5 rounded-lg italic">
+                        <div className="mt-2 text-[10px] text-red-500 bg-red-50/50 p-2 rounded-lg italic border border-red-100">
                           Justificativa: {asg.justification}
                         </div>
                       )}
@@ -559,70 +553,100 @@ export default function App() {
         <Modal title={`Agendar: ${format(selectedDate, "dd/MM/yyyy")}`} isOpen={isScaleModalOpen} onClose={() => setIsScaleModalOpen(false)}>
           <form onSubmit={handleSaveScale} className="space-y-6">
             <div className="space-y-4">
-              {employees.filter(e => e.status === EmployeeStatus.ACTIVE).map(emp => {
-                const val = formAssignments[emp.id] || { checked: false, serviceType: 'Nenhum serviço', status: AssignmentStatus.PENDING, justification: '' };
-                const isNoService = val.serviceType === 'Nenhum serviço';
-                const showJustification = !isNoService && (val.status === AssignmentStatus.CANCELLED || val.status === AssignmentStatus.RESCHEDULED);
+              {assignmentRows.map((row) => {
+                const isNoService = row.serviceType === 'Nenhum serviço';
+                const showJustification = !isNoService && (row.status === AssignmentStatus.CANCELLED || row.status === AssignmentStatus.RESCHEDULED);
 
                 return (
-                  <div key={emp.id} className="p-4 bg-slate-50 rounded-2xl border border-slate-100 space-y-3 transition-all">
-                    <div className="flex items-center gap-3">
-                      <input 
-                        type="checkbox" 
-                        checked={val.checked}
-                        onChange={(e) => setFormAssignments({ ...formAssignments, [emp.id]: { ...val, checked: e.target.checked }})}
-                        className="w-5 h-5 rounded-lg border-slate-300 text-blue-600 focus:ring-blue-500"
-                      />
-                      <div className="flex flex-col">
-                        <span className="text-sm font-bold text-slate-800">{emp.name}</span>
-                        <span className="text-[10px] text-slate-500">{emp.position}</span>
+                  <div key={row.tempId} className="p-4 bg-slate-50 rounded-2xl border border-slate-100 space-y-3 transition-all relative">
+                    <button 
+                      type="button" 
+                      onClick={() => removeAssignmentRow(row.tempId)}
+                      className="absolute top-2 right-2 p-1 text-slate-300 hover:text-red-500 transition-colors"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                    
+                    <div className="flex flex-col gap-3">
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Funcionário</label>
+                        <select 
+                          value={row.employeeId}
+                          onChange={(e) => updateAssignmentRow(row.tempId, { employeeId: e.target.value })}
+                          className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-700"
+                        >
+                          {employees.filter(e => e.status === EmployeeStatus.ACTIVE).map(e => (
+                            <option key={e.id} value={e.id}>{e.name}</option>
+                          ))}
+                        </select>
                       </div>
-                    </div>
-                    {val.checked && (
-                      <div className="pl-8 space-y-3">
-                        <div className={`grid ${!isNoService ? 'grid-cols-2' : 'grid-cols-1'} gap-2`}>
+
+                      <div className={`grid ${!isNoService ? 'grid-cols-2' : 'grid-cols-1'} gap-2`}>
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Serviço</label>
+                          <select 
+                            value={row.serviceType}
+                            onChange={(e) => updateAssignmentRow(row.tempId, { serviceType: e.target.value })}
+                            className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs"
+                          >
+                            {SERVICE_TYPES.map(st => (<option key={st} value={st}>{st}</option>))}
+                          </select>
+                        </div>
+                        {!isNoService && (
                           <div>
-                            <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Serviço</label>
+                            <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Status</label>
                             <select 
-                              value={val.serviceType}
-                              onChange={(e) => setFormAssignments({ ...formAssignments, [emp.id]: { ...val, serviceType: e.target.value }})}
+                              value={row.status}
+                              onChange={(e) => updateAssignmentRow(row.tempId, { status: e.target.value as AssignmentStatus })}
                               className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs"
                             >
-                              {SERVICE_TYPES.map(st => (<option key={st} value={st}>{st}</option>))}
+                              {Object.values(AssignmentStatus).map(s => (<option key={s} value={s}>{s}</option>))}
                             </select>
-                          </div>
-                          {!isNoService && (
-                            <div>
-                              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Status</label>
-                              <select 
-                                value={val.status}
-                                onChange={(e) => setFormAssignments({ ...formAssignments, [emp.id]: { ...val, status: e.target.value as AssignmentStatus }})}
-                                className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs"
-                              >
-                                {Object.values(AssignmentStatus).map(s => (<option key={s} value={s}>{s}</option>))}
-                              </select>
-                            </div>
-                          )}
-                        </div>
-                        {showJustification && (
-                          <div className="animate-in fade-in zoom-in-95 duration-200">
-                            <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Justificativa</label>
-                            <textarea 
-                              required={showJustification}
-                              value={val.justification}
-                              onChange={(e) => setFormAssignments({ ...formAssignments, [emp.id]: { ...val, justification: e.target.value }})}
-                              placeholder="Motivo do cancelamento ou reagendamento..."
-                              className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs h-16 resize-none"
-                            />
                           </div>
                         )}
                       </div>
-                    )}
+                      
+                      {!isNoService && (
+                        <div className="animate-in fade-in zoom-in-95 duration-200">
+                          <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Descrição do Serviço</label>
+                          <textarea 
+                            value={row.description}
+                            onChange={(e) => updateAssignmentRow(row.tempId, { description: e.target.value })}
+                            placeholder="Ex: Evento XYZ, Ensaio ABC..."
+                            className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs h-16 resize-none"
+                          />
+                        </div>
+                      )}
+
+                      {showJustification && (
+                        <div className="animate-in fade-in zoom-in-95 duration-200">
+                          <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1 text-red-500">Justificativa</label>
+                          <textarea 
+                            required={showJustification}
+                            value={row.justification}
+                            onChange={(e) => updateAssignmentRow(row.tempId, { justification: e.target.value })}
+                            placeholder="Motivo do cancelamento..."
+                            className="w-full bg-white border border-red-200 rounded-xl px-3 py-2 text-xs h-16 resize-none"
+                          />
+                        </div>
+                      )}
+                    </div>
                   </div>
                 );
               })}
+
+              <button 
+                type="button" 
+                onClick={addAssignmentRow}
+                className="w-full border-2 border-dashed border-slate-200 rounded-2xl py-3 text-slate-400 text-xs font-bold flex items-center justify-center gap-2 hover:bg-slate-50 hover:border-slate-300 transition-all active:scale-95"
+              >
+                <UserPlus className="w-4 h-4" /> Adicionar Outro Funcionário/Serviço
+              </button>
             </div>
-            <Button type="submit" className="w-full py-4 text-base shadow-lg shadow-blue-500/20">Salvar Alterações</Button>
+            
+            <div className="sticky bottom-0 pt-4 bg-white">
+              <Button type="submit" className="w-full py-4 text-base shadow-lg shadow-blue-500/20">Salvar Escala do Dia</Button>
+            </div>
           </form>
         </Modal>
       </div>
@@ -648,10 +672,10 @@ export default function App() {
                 <div className="space-y-2">
                   {item.assignments
                     .filter(asg => asg.serviceType !== 'Nenhum serviço')
-                    .map(asg => {
+                    .map((asg, idx) => {
                     const emp = employees.find(e => e.id === asg.employeeId);
                     return (
-                      <Card key={asg.employeeId} className={`border-l-4 ${asg.status === AssignmentStatus.COMPLETED ? 'border-l-emerald-500' : asg.status === AssignmentStatus.CANCELLED ? 'border-l-red-500' : asg.status === AssignmentStatus.RESCHEDULED ? 'border-l-amber-500' : 'border-l-slate-300'}`}>
+                      <Card key={`${asg.employeeId}-${idx}`} className={`border-l-4 ${asg.status === AssignmentStatus.COMPLETED ? 'border-l-emerald-500' : asg.status === AssignmentStatus.CANCELLED ? 'border-l-red-500' : asg.status === AssignmentStatus.RESCHEDULED ? 'border-l-amber-500' : 'border-l-slate-300'}`}>
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-3">
                             <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold bg-slate-50 text-slate-600`}>
@@ -664,8 +688,14 @@ export default function App() {
                           </div>
                           <StatusBadge status={asg.status} />
                         </div>
+                        {asg.description && (
+                          <div className="mt-2 text-[10px] text-slate-500 bg-slate-50/50 p-2 rounded-lg border border-slate-100 flex items-start gap-1.5">
+                            <AlignLeft className="w-3 h-3 mt-0.5 shrink-0 opacity-40" />
+                            <p className="leading-relaxed">{asg.description}</p>
+                          </div>
+                        )}
                         {asg.justification && (
-                          <p className="mt-2 text-[10px] text-slate-500 italic px-2 py-1 bg-slate-50 rounded border border-slate-100">"{asg.justification}"</p>
+                          <p className="mt-2 text-[10px] text-red-500 italic px-2 py-1 bg-red-50/30 rounded border border-red-100">"{asg.justification}"</p>
                         )}
                       </Card>
                     );
@@ -762,7 +792,7 @@ export default function App() {
 
     const reportData = employees.map(emp => {
       const services = filteredScale.reduce((acc, curr) => 
-        acc + (curr.assignments.some(a => a.employeeId === emp.id && a.status === AssignmentStatus.COMPLETED && a.serviceType !== 'Nenhum serviço') ? 1 : 0), 0);
+        acc + (curr.assignments.filter(a => a.employeeId === emp.id && a.status === AssignmentStatus.COMPLETED && a.serviceType !== 'Nenhum serviço').length), 0);
       const absCount = absences.filter(a => a.employeeId === emp.id && isWithinInterval(new Date(a.date + 'T12:00:00'), currentRange)).length;
       const warnCount = warnings.filter(w => w.employeeId === emp.id && isWithinInterval(new Date(w.date + 'T12:00:00'), currentRange)).length;
       return { ...emp, services, absCount, warnCount };
@@ -873,6 +903,68 @@ export default function App() {
       </main>
       
       {/* Modals */}
+      {/* Fix: Added missing Employee Modal for adding and editing staff members */}
+      <Modal 
+        title={editingEmployee ? "Editar Funcionário" : "Novo Funcionário"} 
+        isOpen={isEmployeeModalOpen} 
+        onClose={() => { setIsEmployeeModalOpen(false); setEditingEmployee(null); }}
+      >
+        <form onSubmit={handleSaveEmployee} className="space-y-4">
+          <div>
+            <label className="block text-xs font-bold text-slate-500 mb-1">Nome Completo</label>
+            <input 
+              name="name" 
+              defaultValue={editingEmployee?.name} 
+              required 
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm" 
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-slate-500 mb-1">Cargo</label>
+            <input 
+              name="position" 
+              defaultValue={editingEmployee?.position} 
+              required 
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm" 
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold text-slate-500 mb-1">Data Admissão</label>
+              <input 
+                name="admissionDate" 
+                type="date" 
+                defaultValue={editingEmployee?.admissionDate} 
+                required 
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm" 
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-500 mb-1">Status</label>
+              <select 
+                name="status" 
+                defaultValue={editingEmployee?.status} 
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm"
+              >
+                {Object.values(EmployeeStatus).map(v => <option key={v} value={v}>{v}</option>)}
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-slate-500 mb-1">Observações</label>
+            <textarea 
+              name="notes" 
+              defaultValue={editingEmployee?.notes} 
+              rows={3} 
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm" 
+            />
+          </div>
+          <Button type="submit" className="w-full py-4 text-base shadow-lg shadow-blue-500/20">
+            {editingEmployee ? "Salvar Alterações" : "Cadastrar Funcionário"}
+          </Button>
+        </form>
+      </Modal>
+
       <Modal title="Registrar Falta" isOpen={isAbsenceModalOpen} onClose={() => setIsAbsenceModalOpen(false)}>
         <form onSubmit={handleAddAbsence} className="space-y-4">
           <div>
