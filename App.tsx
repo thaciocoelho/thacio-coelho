@@ -24,7 +24,8 @@ import {
   Clock,
   PieChart as PieChartIcon,
   AlignLeft,
-  UserPlus
+  UserPlus,
+  Filter
 } from 'lucide-react';
 import { 
   Employee, 
@@ -221,6 +222,9 @@ export default function App() {
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [period, setPeriod] = useState<PeriodFilter>('monthly');
 
+  // Filter for Services tab
+  const [serviceStatusFilter, setServiceStatusFilter] = useState<AssignmentStatus | 'all'>('all');
+
   const currentRange = useMemo(() => {
     const today = new Date();
     switch (period) {
@@ -280,7 +284,6 @@ export default function App() {
     setEditingEmployee(null);
   };
 
-  // Fix: Added missing handleEditEmployee function to resolve reference error on line 450
   const handleEditEmployee = (emp: Employee) => {
     setEditingEmployee(emp);
     setIsEmployeeModalOpen(true);
@@ -300,7 +303,6 @@ export default function App() {
         tempId: Math.random().toString(36).substr(2, 9)
       })));
     } else {
-      // Start with one empty assignment if none exists
       addAssignmentRow();
     }
     setIsScaleModalOpen(true);
@@ -330,10 +332,8 @@ export default function App() {
     e.preventDefault();
     const date = format(selectedDate, 'yyyy-MM-dd');
     
-    // Convert form rows back to Assignments (remove tempId)
     const finalAssignments: Assignment[] = assignmentRows.map(({ tempId, ...rest }) => ({
       ...rest,
-      // Status remains PENDING for "Nenhum serviço", but description/justification cleared
       ...(rest.serviceType === 'Nenhum serviço' ? { status: AssignmentStatus.PENDING, justification: '', description: '' } : {})
     }));
     
@@ -654,25 +654,57 @@ export default function App() {
   };
 
   const renderServices = () => {
-    const sortedScale = [...scale].sort((a, b) => b.date.localeCompare(a.date));
-    const itemsWithServices = sortedScale.filter(item => 
-      item.assignments.some(asg => asg.serviceType !== 'Nenhum serviço')
-    );
+    const filteredScale = scale
+      .map(item => ({
+        ...item,
+        assignments: item.assignments.filter(asg => {
+          const isNotNone = asg.serviceType !== 'Nenhum serviço';
+          const matchesStatus = serviceStatusFilter === 'all' || asg.status === serviceStatusFilter;
+          return isNotNone && matchesStatus;
+        })
+      }))
+      .filter(item => item.assignments.length > 0)
+      .sort((a, b) => b.date.localeCompare(a.date));
+
+    const filterOptions: { id: AssignmentStatus | 'all', label: string }[] = [
+      { id: 'all', label: 'Todos' },
+      { id: AssignmentStatus.COMPLETED, label: 'Concluídos' },
+      { id: AssignmentStatus.PENDING, label: 'Pendentes' },
+      { id: AssignmentStatus.CANCELLED, label: 'Cancelados' },
+      { id: AssignmentStatus.RESCHEDULED, label: 'Reagendados' },
+    ];
 
     return (
       <div className="space-y-6 pb-24">
-        <h2 className="text-2xl font-bold text-slate-800">Controle de Serviços</h2>
+        <div className="space-y-4">
+          <h2 className="text-2xl font-bold text-slate-800">Controle de Serviços</h2>
+          
+          <div className="flex gap-2 overflow-x-auto no-scrollbar pb-2 pt-1 -mx-2 px-2">
+            {filterOptions.map(opt => (
+              <button
+                key={opt.id}
+                onClick={() => setServiceStatusFilter(opt.id)}
+                className={`px-4 py-2 rounded-full text-xs font-bold transition-all border whitespace-nowrap shadow-sm ${
+                  serviceStatusFilter === opt.id 
+                    ? 'bg-blue-600 text-white border-blue-600 shadow-blue-200' 
+                    : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
         <div className="space-y-6">
-          {itemsWithServices.length > 0 ? (
-            itemsWithServices.map(item => (
+          {filteredScale.length > 0 ? (
+            filteredScale.map(item => (
               <div key={item.id}>
                 <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
                   <CalendarDays className="w-3 h-3" /> {format(new Date(item.date + 'T12:00:00'), "EEEE, dd 'de' MMMM", { locale: ptBR })}
                 </div>
                 <div className="space-y-2">
-                  {item.assignments
-                    .filter(asg => asg.serviceType !== 'Nenhum serviço')
-                    .map((asg, idx) => {
+                  {item.assignments.map((asg, idx) => {
                     const emp = employees.find(e => e.id === asg.employeeId);
                     return (
                       <Card key={`${asg.employeeId}-${idx}`} className={`border-l-4 ${asg.status === AssignmentStatus.COMPLETED ? 'border-l-emerald-500' : asg.status === AssignmentStatus.CANCELLED ? 'border-l-red-500' : asg.status === AssignmentStatus.RESCHEDULED ? 'border-l-amber-500' : 'border-l-slate-300'}`}>
@@ -705,8 +737,8 @@ export default function App() {
             ))
           ) : (
             <div className="text-center py-20 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200">
-              <ClipboardList className="w-12 h-12 text-slate-300 mx-auto mb-2" />
-              <p className="text-slate-400 text-sm">Nenhum serviço realizado ainda.</p>
+              <Filter className="w-12 h-12 text-slate-300 mx-auto mb-2 opacity-50" />
+              <p className="text-slate-400 text-sm">Nenhum serviço encontrado para este filtro.</p>
             </div>
           )}
         </div>
@@ -903,7 +935,6 @@ export default function App() {
       </main>
       
       {/* Modals */}
-      {/* Fix: Added missing Employee Modal for adding and editing staff members */}
       <Modal 
         title={editingEmployee ? "Editar Funcionário" : "Novo Funcionário"} 
         isOpen={isEmployeeModalOpen} 
