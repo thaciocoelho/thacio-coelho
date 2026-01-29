@@ -57,4 +57,4 @@ export interface Warning {
 
 export type ViewTab = 'dashboard' | 'employees' | 'scale' | 'services' | 'absences' | 'warnings' | 'reports';
 
-export type PeriodFilter = 'daily' | 'weekly' | 'monthly' | 'custom';
+export type PeriodFilter = 'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom';

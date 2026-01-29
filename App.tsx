@@ -24,7 +24,8 @@ import {
   CheckCircle2,
   XCircle,
   RefreshCw,
-  Clock
+  Clock,
+  PieChart as PieChartIcon
 } from 'lucide-react';
 import { 
   Employee, 
@@ -55,7 +56,21 @@ import {
   ResponsiveContainer, 
   Cell 
 } from 'recharts';
-import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, addMonths, isWithinInterval, startOfDay, endOfDay, startOfWeek, endOfWeek } from 'date-fns';
+import { 
+  format, 
+  startOfMonth, 
+  endOfMonth, 
+  eachDayOfInterval, 
+  isSameDay, 
+  addMonths, 
+  isWithinInterval, 
+  startOfDay, 
+  endOfDay, 
+  startOfWeek, 
+  endOfWeek,
+  startOfYear,
+  endOfYear
+} from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
 // --- Components ---
@@ -177,8 +192,9 @@ export default function App() {
     const today = new Date();
     switch (period) {
       case 'daily': return { start: startOfDay(today), end: endOfDay(today) };
-      case 'weekly': return { start: startOfWeek(today), end: endOfWeek(today) };
+      case 'weekly': return { start: startOfWeek(today, { weekStartsOn: 0 }), end: endOfWeek(today, { weekStartsOn: 0 }) };
       case 'monthly': return { start: startOfMonth(today), end: endOfMonth(today) };
+      case 'yearly': return { start: startOfYear(today), end: endOfYear(today) };
       default: return { start: addMonths(today, -1), end: today };
     }
   }, [period]);
@@ -318,10 +334,10 @@ export default function App() {
     <div className="space-y-6 pb-24">
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-bold text-slate-800">Resumo Geral</h2>
-        <div className="flex bg-white rounded-xl p-1 shadow-sm border border-slate-100">
-          {(['daily', 'weekly', 'monthly'] as PeriodFilter[]).map((p) => (
-            <button key={p} onClick={() => setPeriod(p)} className={`px-3 py-1.5 text-xs font-semibold rounded-lg capitalize transition-all ${period === p ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}>
-              {p === 'daily' ? 'Diário' : p === 'weekly' ? 'Semanal' : 'Mensal'}
+        <div className="flex bg-white rounded-xl p-1 shadow-sm border border-slate-100 overflow-x-auto no-scrollbar">
+          {(['daily', 'weekly', 'monthly', 'yearly'] as PeriodFilter[]).map((p) => (
+            <button key={p} onClick={() => setPeriod(p)} className={`px-3 py-1.5 text-[10px] font-semibold rounded-lg capitalize transition-all whitespace-nowrap ${period === p ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}>
+              {p === 'daily' ? 'Diário' : p === 'weekly' ? 'Semanal' : p === 'monthly' ? 'Mensal' : 'Anual'}
             </button>
           ))}
         </div>
@@ -612,33 +628,89 @@ export default function App() {
   };
 
   const renderAbsences = () => (
-    <div className="space-y-6 pb-24">
+    <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-bold text-slate-800 text-red-600">Faltas</h2>
         <Button onClick={() => setIsAbsenceModalOpen(true)} variant="danger"><Plus className="w-4 h-4" /> Registrar</Button>
       </div>
       <div className="space-y-4">
-        {absences.sort((a, b) => b.date.localeCompare(a.date)).map(abs => {
-          const emp = employees.find(e => e.id === abs.employeeId);
-          return (
-            <Card key={abs.id} className="border-l-4 border-l-red-500">
-              <div className="flex justify-between items-start mb-2">
-                <div><h4 className="font-bold text-slate-800">{emp?.name}</h4><p className="text-xs text-slate-500">{format(new Date(abs.date + 'T12:00:00'), 'dd/MM/yyyy')}</p></div>
-                <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${abs.justified ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'}`}>{abs.justified ? 'JUSTIFICADA' : 'NÃO JUSTIFICADA'}</span>
-              </div>
-              <p className="text-sm text-slate-600 italic bg-slate-50 p-2 rounded-lg">"{abs.reason}"</p>
-            </Card>
-          );
-        })}
+        {absences.length === 0 ? (
+          <p className="text-sm text-slate-400 text-center py-4">Nenhuma falta registrada.</p>
+        ) : (
+          absences.sort((a, b) => b.date.localeCompare(a.date)).map(abs => {
+            const emp = employees.find(e => e.id === abs.employeeId);
+            return (
+              <Card key={abs.id} className="border-l-4 border-l-red-500">
+                <div className="flex justify-between items-start mb-2">
+                  <div><h4 className="font-bold text-slate-800">{emp?.name}</h4><p className="text-xs text-slate-500">{format(new Date(abs.date + 'T12:00:00'), 'dd/MM/yyyy')}</p></div>
+                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${abs.justified ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'}`}>{abs.justified ? 'JUSTIFICADA' : 'NÃO JUSTIFICADA'}</span>
+                </div>
+                <p className="text-sm text-slate-600 italic bg-slate-50 p-2 rounded-lg">"{abs.reason}"</p>
+              </Card>
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+
+  const renderWarnings = () => (
+    <div className="space-y-6 pt-6 border-t border-slate-200">
+      <div className="flex items-center justify-between">
+        <h2 className="text-2xl font-bold text-slate-800 text-amber-600">Advertências</h2>
+        <Button onClick={() => setIsWarningModalOpen(true)} variant="warning"><Plus className="w-4 h-4" /> Registrar</Button>
+      </div>
+      <div className="space-y-4">
+        {warnings.length === 0 ? (
+          <p className="text-sm text-slate-400 text-center py-4">Nenhuma advertência registrada.</p>
+        ) : (
+          warnings.sort((a, b) => b.date.localeCompare(a.date)).map(warn => {
+            const emp = employees.find(e => e.id === warn.employeeId);
+            return (
+              <Card key={warn.id} className="border-l-4 border-l-amber-500">
+                <div className="flex justify-between items-start mb-2">
+                  <div>
+                    <h4 className="font-bold text-slate-800">{emp?.name}</h4>
+                    <p className="text-xs text-slate-500">{format(new Date(warn.date + 'T12:00:00'), 'dd/MM/yyyy')}</p>
+                  </div>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-amber-100 text-amber-700 uppercase">
+                    {warn.type}
+                  </span>
+                </div>
+                <p className="text-sm text-slate-600 italic bg-slate-50 p-2 rounded-lg">"{warn.reason}"</p>
+              </Card>
+            );
+          })
+        )}
       </div>
     </div>
   );
 
   const renderReports = () => {
+    // Shared state logic for period
+    const filteredScale = scale.filter(s => isWithinInterval(new Date(s.date + 'T12:00:00'), currentRange));
+    
+    // General Report logic
+    const generalStats = {
+      [AssignmentStatus.COMPLETED]: 0,
+      [AssignmentStatus.CANCELLED]: 0,
+      [AssignmentStatus.RESCHEDULED]: 0,
+      [AssignmentStatus.PENDING]: 0,
+    };
+    
+    filteredScale.forEach(s => {
+      s.assignments.forEach(asg => {
+        if (asg.serviceType !== 'Nenhum serviço') {
+          generalStats[asg.status]++;
+        }
+      });
+    });
+
     const reportData = employees.map(emp => {
-      const services = scale.reduce((acc, curr) => acc + (curr.assignments.some(a => a.employeeId === emp.id && a.status === AssignmentStatus.COMPLETED && a.serviceType !== 'Nenhum serviço') ? 1 : 0), 0);
-      const absCount = absences.filter(a => a.employeeId === emp.id).length;
-      const warnCount = warnings.filter(w => w.employeeId === emp.id).length;
+      const services = filteredScale.reduce((acc, curr) => 
+        acc + (curr.assignments.some(a => a.employeeId === emp.id && a.status === AssignmentStatus.COMPLETED && a.serviceType !== 'Nenhum serviço') ? 1 : 0), 0);
+      const absCount = absences.filter(a => a.employeeId === emp.id && isWithinInterval(new Date(a.date + 'T12:00:00'), currentRange)).length;
+      const warnCount = warnings.filter(w => w.employeeId === emp.id && isWithinInterval(new Date(w.date + 'T12:00:00'), currentRange)).length;
       return { ...emp, services, absCount, warnCount };
     });
 
@@ -648,29 +720,72 @@ export default function App() {
           <h2 className="text-2xl font-bold text-slate-800">Relatórios</h2>
           <Button variant="secondary" className="text-xs"><Download className="w-4 h-4" /> Exportar</Button>
         </div>
-        <Card className="overflow-x-auto no-scrollbar">
-          <table className="w-full text-left text-sm">
-            <thead>
-              <tr className="border-b border-slate-100">
-                <th className="py-3 px-2 font-bold text-slate-400 uppercase text-[10px]">Funcionário</th>
-                <th className="py-3 px-2 font-bold text-slate-400 uppercase text-[10px] text-center">Concluídos</th>
-                <th className="py-3 px-2 font-bold text-slate-400 uppercase text-[10px] text-center">Faltas</th>
-              </tr>
-            </thead>
-            <tbody>
-              {reportData.map(data => (
-                <tr key={data.id} className="border-b border-slate-50 last:border-0">
-                  <td className="py-4 px-2">
-                    <p className="font-bold text-slate-800 leading-tight">{data.name}</p>
-                    <p className="text-[10px] text-slate-400">{data.position}</p>
-                  </td>
-                  <td className="py-4 px-2 text-center font-bold text-emerald-600">{data.services}</td>
-                  <td className="py-4 px-2 text-center font-bold text-red-500">{data.absCount}</td>
+
+        {/* Period Selector inside reports */}
+        <div className="flex bg-white rounded-xl p-1 shadow-sm border border-slate-100 overflow-x-auto no-scrollbar">
+          {(['weekly', 'monthly', 'yearly'] as PeriodFilter[]).map((p) => (
+            <button key={p} onClick={() => setPeriod(p)} className={`flex-1 px-3 py-1.5 text-[10px] font-semibold rounded-lg capitalize transition-all whitespace-nowrap ${period === p ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}>
+              {p === 'weekly' ? 'Semanal' : p === 'monthly' ? 'Mensal' : 'Anual'}
+            </button>
+          ))}
+        </div>
+
+        {/* General Overview Section */}
+        <div className="space-y-4">
+          <h3 className="font-bold text-slate-800 text-lg flex items-center gap-2">
+            <PieChartIcon className="w-5 h-5 text-blue-600" /> Relatório Geral de Serviços
+          </h3>
+          <div className="grid grid-cols-2 gap-3">
+            <Card className="border-l-4 border-l-emerald-500 p-3">
+              <div className="text-[10px] text-slate-400 font-bold uppercase mb-1">Concluídos</div>
+              <div className="text-xl font-black text-slate-800">{generalStats[AssignmentStatus.COMPLETED]}</div>
+            </Card>
+            <Card className="border-l-4 border-l-red-500 p-3">
+              <div className="text-[10px] text-slate-400 font-bold uppercase mb-1">Cancelados</div>
+              <div className="text-xl font-black text-slate-800">{generalStats[AssignmentStatus.CANCELLED]}</div>
+            </Card>
+            <Card className="border-l-4 border-l-amber-500 p-3">
+              <div className="text-[10px] text-slate-400 font-bold uppercase mb-1">Reagendados</div>
+              <div className="text-xl font-black text-slate-800">{generalStats[AssignmentStatus.RESCHEDULED]}</div>
+            </Card>
+            <Card className="border-l-4 border-l-slate-400 p-3">
+              <div className="text-[10px] text-slate-400 font-bold uppercase mb-1">Pendentes</div>
+              <div className="text-xl font-black text-slate-800">{generalStats[AssignmentStatus.PENDING]}</div>
+            </Card>
+          </div>
+        </div>
+
+        {/* Individual Report Section */}
+        <div className="space-y-4">
+          <h3 className="font-bold text-slate-800 text-lg flex items-center gap-2">
+            <Users className="w-5 h-5 text-blue-600" /> Desempenho por Funcionário
+          </h3>
+          <Card className="overflow-x-auto no-scrollbar">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-slate-100">
+                  <th className="py-3 px-2 font-bold text-slate-400 uppercase text-[10px]">Equipe</th>
+                  <th className="py-3 px-2 font-bold text-slate-400 uppercase text-[10px] text-center">Concl.</th>
+                  <th className="py-3 px-2 font-bold text-slate-400 uppercase text-[10px] text-center">Faltas</th>
+                  <th className="py-3 px-2 font-bold text-slate-400 uppercase text-[10px] text-center">Adv.</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </Card>
+              </thead>
+              <tbody>
+                {reportData.map(data => (
+                  <tr key={data.id} className="border-b border-slate-50 last:border-0">
+                    <td className="py-4 px-2">
+                      <p className="font-bold text-slate-800 leading-tight truncate max-w-[80px]">{data.name}</p>
+                      <p className="text-[10px] text-slate-400 truncate">{data.position}</p>
+                    </td>
+                    <td className="py-4 px-2 text-center font-bold text-emerald-600">{data.services}</td>
+                    <td className="py-4 px-2 text-center font-bold text-red-500">{data.absCount}</td>
+                    <td className="py-4 px-2 text-center font-bold text-amber-500">{data.warnCount}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Card>
+        </div>
       </div>
     );
   };
@@ -680,6 +795,7 @@ export default function App() {
     { id: 'employees', label: 'Equipe', icon: <Users className="w-6 h-6" /> },
     { id: 'scale', label: 'Escala', icon: <CalendarDays className="w-6 h-6" /> },
     { id: 'services', label: 'Serviços', icon: <ClipboardList className="w-6 h-6" /> },
+    { id: 'absences', label: 'Faltas/Adv', icon: <AlertTriangle className="w-6 h-6" /> },
     { id: 'reports', label: 'Relatórios', icon: <BarChart3 className="w-6 h-6" /> }
   ];
 
@@ -696,13 +812,72 @@ export default function App() {
         {activeTab === 'employees' && renderEmployees()}
         {activeTab === 'scale' && renderScale()}
         {activeTab === 'services' && renderServices()}
+        {activeTab === 'absences' && (
+          <div className="space-y-8 pb-24">
+            {renderAbsences()}
+            {renderWarnings()}
+          </div>
+        )}
         {activeTab === 'reports' && renderReports()}
       </main>
+      
+      {/* Modals */}
+      <Modal title="Registrar Falta" isOpen={isAbsenceModalOpen} onClose={() => setIsAbsenceModalOpen(false)}>
+        <form onSubmit={handleAddAbsence} className="space-y-4">
+          <div>
+            <label className="block text-xs font-bold text-slate-500 mb-1">Funcionário</label>
+            <select name="employeeId" required className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm">
+              {employees.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-slate-500 mb-1">Data</label>
+            <input name="date" type="date" required className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm" />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-slate-500 mb-1">Motivo</label>
+            <textarea name="reason" rows={2} required className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm" />
+          </div>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" name="justified" className="w-4 h-4 rounded border-slate-300" />
+            <span className="text-sm font-medium text-slate-700">Falta Justificada?</span>
+          </label>
+          <Button type="submit" variant="danger" className="w-full py-4 text-base">Salvar Registro</Button>
+        </form>
+      </Modal>
+
+      <Modal title="Registrar Advertência" isOpen={isWarningModalOpen} onClose={() => setIsWarningModalOpen(false)}>
+        <form onSubmit={handleAddWarning} className="space-y-4">
+          <div>
+            <label className="block text-xs font-bold text-slate-500 mb-1">Funcionário</label>
+            <select name="employeeId" required className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm">
+              {employees.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-slate-500 mb-1">Tipo</label>
+            <select name="type" required className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm">
+              {Object.values(WarningType).map(v => <option key={v} value={v}>{v}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-slate-500 mb-1">Data</label>
+            <input name="date" type="date" required className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm" />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-slate-500 mb-1">Motivo / Descrição</label>
+            <textarea name="reason" rows={3} required className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm" />
+          </div>
+          <Button type="submit" variant="warning" className="w-full py-4 text-base">Emitir Advertência</Button>
+        </form>
+      </Modal>
+
       <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white/90 backdrop-blur-lg border-t border-slate-100 safe-bottom z-40">
-        <div className="flex justify-around items-center px-2 py-3">
+        <div className="flex justify-around items-center px-1 py-3">
           {tabs.map(tab => (
-            <button key={tab.id} onClick={() => setActiveTab(tab.id)} className={`flex flex-col items-center gap-1 transition-all px-4 py-1 rounded-2xl ${activeTab === tab.id ? 'text-blue-600 bg-blue-50' : 'text-slate-400 hover:text-slate-600'}`}>
-              {tab.icon}<span className={`text-[10px] font-bold ${activeTab === tab.id ? 'opacity-100' : 'opacity-80'}`}>{tab.label}</span>
+            <button key={tab.id} onClick={() => setActiveTab(tab.id)} className={`flex flex-col items-center gap-1 transition-all px-2 py-1 rounded-xl ${activeTab === tab.id ? 'text-blue-600 bg-blue-50' : 'text-slate-400 hover:text-slate-600'}`}>
+              <div className="transform scale-90">{tab.icon}</div>
+              <span className={`text-[9px] font-bold truncate max-w-[56px] ${activeTab === tab.id ? 'opacity-100' : 'opacity-80'}`}>{tab.label}</span>
             </button>
           ))}
         </div>
