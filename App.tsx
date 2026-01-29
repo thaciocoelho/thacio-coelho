@@ -1,17 +1,15 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   LayoutDashboard, 
   Users, 
   CalendarDays, 
   ClipboardList, 
-  UserX, 
   AlertTriangle, 
   BarChart3,
   Plus,
   ChevronLeft,
   ChevronRight,
-  Filter,
   Download,
   Edit2,
   Trash2,
@@ -72,6 +70,17 @@ import {
   endOfYear
 } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+
+// --- Storage Configuration ---
+const STORAGE_PREFIX = 'servitrack_v1_';
+const OLD_PREFIX = 'gpro_';
+
+const KEYS = {
+  EMPLOYEES: 'employees',
+  SCALE: 'scale',
+  ABSENCES: 'absences',
+  WARNINGS: 'warnings'
+};
 
 // --- Components ---
 
@@ -163,10 +172,44 @@ const StatusBadge: React.FC<{ status: AssignmentStatus }> = ({ status }) => {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<ViewTab>('dashboard');
-  const [employees, setEmployees] = useState<Employee[]>(INITIAL_EMPLOYEES);
-  const [scale, setScale] = useState<ScaleItem[]>(INITIAL_SCALE);
-  const [absences, setAbsences] = useState<Absence[]>(INITIAL_ABSENCES);
-  const [warnings, setWarnings] = useState<Warning[]>(INITIAL_WARNINGS);
+  
+  // Advanced Persistence Helper with Migration
+  const getStoredData = <T,>(key: string, defaultValue: T): T => {
+    try {
+      const currentKey = `${STORAGE_PREFIX}${key}`;
+      const oldKey = `${OLD_PREFIX}${key}`;
+      
+      const saved = localStorage.getItem(currentKey);
+      if (saved) return JSON.parse(saved);
+      
+      // Migration Check: If no new data, check for old data
+      const oldSaved = localStorage.getItem(oldKey);
+      if (oldSaved) {
+        console.log(`Migrating data for key: ${key}`);
+        const data = JSON.parse(oldSaved);
+        // Save to new location immediately
+        localStorage.setItem(currentKey, oldSaved);
+        return data;
+      }
+      
+      return defaultValue;
+    } catch (e) {
+      console.error(`Error loading ${key} from storage`, e);
+      return defaultValue;
+    }
+  };
+
+  // State initialization
+  const [employees, setEmployees] = useState<Employee[]>(() => getStoredData(KEYS.EMPLOYEES, INITIAL_EMPLOYEES));
+  const [scale, setScale] = useState<ScaleItem[]>(() => getStoredData(KEYS.SCALE, INITIAL_SCALE));
+  const [absences, setAbsences] = useState<Absence[]>(() => getStoredData(KEYS.ABSENCES, INITIAL_ABSENCES));
+  const [warnings, setWarnings] = useState<Warning[]>(() => getStoredData(KEYS.WARNINGS, INITIAL_WARNINGS));
+
+  // Auto-sync effects
+  useEffect(() => { localStorage.setItem(`${STORAGE_PREFIX}${KEYS.EMPLOYEES}`, JSON.stringify(employees)); }, [employees]);
+  useEffect(() => { localStorage.setItem(`${STORAGE_PREFIX}${KEYS.SCALE}`, JSON.stringify(scale)); }, [scale]);
+  useEffect(() => { localStorage.setItem(`${STORAGE_PREFIX}${KEYS.ABSENCES}`, JSON.stringify(absences)); }, [absences]);
+  useEffect(() => { localStorage.setItem(`${STORAGE_PREFIX}${KEYS.WARNINGS}`, JSON.stringify(warnings)); }, [warnings]);
   
   // States for Modals
   const [isEmployeeModalOpen, setIsEmployeeModalOpen] = useState(false);
@@ -241,10 +284,10 @@ export default function App() {
     };
 
     if (editingEmployee) {
-      setEmployees(employees.map(emp => emp.id === editingEmployee.id ? { ...emp, ...employeeData } : emp));
+      setEmployees(prev => prev.map(emp => emp.id === editingEmployee.id ? { ...emp, ...employeeData } : emp));
     } else {
       const newEmp: Employee = { id: Math.random().toString(36).substr(2, 9), ...employeeData };
-      setEmployees([...employees, newEmp]);
+      setEmployees(prev => [...prev, newEmp]);
     }
     setIsEmployeeModalOpen(false);
     setEditingEmployee(null);
@@ -257,7 +300,7 @@ export default function App() {
 
   const handleDeleteEmployee = (id: string) => {
     if (confirm('Deseja realmente excluir este funcionário?')) {
-      setEmployees(employees.filter(emp => emp.id !== id));
+      setEmployees(prev => prev.filter(emp => emp.id !== id));
     }
   };
 
@@ -289,14 +332,16 @@ export default function App() {
         justification: val.serviceType === 'Nenhum serviço' ? '' : val.justification
       }));
     
-    const existingIndex = scale.findIndex(s => s.date === date);
-    if (existingIndex >= 0) {
-      const newScale = [...scale];
-      newScale[existingIndex] = { ...newScale[existingIndex], assignments };
-      setScale(newScale);
-    } else {
-      setScale([...scale, { id: Math.random().toString(36).substr(2, 9), date, assignments }]);
-    }
+    setScale(prev => {
+      const existingIndex = prev.findIndex(s => s.date === date);
+      if (existingIndex >= 0) {
+        const newScale = [...prev];
+        newScale[existingIndex] = { ...newScale[existingIndex], assignments };
+        return newScale;
+      } else {
+        return [...prev, { id: Math.random().toString(36).substr(2, 9), date, assignments }];
+      }
+    });
     setIsScaleModalOpen(false);
   };
 
@@ -310,7 +355,7 @@ export default function App() {
       reason: formData.get('reason') as string,
       justified: formData.get('justified') === 'on'
     };
-    setAbsences([...absences, newAbs]);
+    setAbsences(prev => [...prev, newAbs]);
     setIsAbsenceModalOpen(false);
   };
 
@@ -324,7 +369,7 @@ export default function App() {
       reason: formData.get('reason') as string,
       type: formData.get('type') as WarningType
     };
-    setWarnings([...warnings, newWarn]);
+    setWarnings(prev => [...prev, newWarn]);
     setIsWarningModalOpen(false);
   };
 
@@ -586,42 +631,54 @@ export default function App() {
 
   const renderServices = () => {
     const sortedScale = [...scale].sort((a, b) => b.date.localeCompare(a.date));
+    const itemsWithServices = sortedScale.filter(item => 
+      item.assignments.some(asg => asg.serviceType !== 'Nenhum serviço')
+    );
+
     return (
       <div className="space-y-6 pb-24">
         <h2 className="text-2xl font-bold text-slate-800">Controle de Serviços</h2>
         <div className="space-y-6">
-          {sortedScale.map(item => (
-            <div key={item.id}>
-              <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
-                <CalendarDays className="w-3 h-3" /> {format(new Date(item.date + 'T12:00:00'), "EEEE, dd 'de' MMMM", { locale: ptBR })}
-              </div>
-              <div className="space-y-2">
-                {item.assignments.map(asg => {
-                  const emp = employees.find(e => e.id === asg.employeeId);
-                  const isNoService = asg.serviceType === 'Nenhum serviço';
-                  return (
-                    <Card key={asg.employeeId} className={`border-l-4 ${asg.status === AssignmentStatus.COMPLETED ? 'border-l-emerald-500' : asg.status === AssignmentStatus.CANCELLED ? 'border-l-red-500' : asg.status === AssignmentStatus.RESCHEDULED ? 'border-l-amber-500' : 'border-l-slate-300'}`}>
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold ${isNoService ? 'bg-slate-100 text-slate-400' : 'bg-slate-50 text-slate-600'}`}>
-                            {getServiceIcon(asg.serviceType)}
+          {itemsWithServices.length > 0 ? (
+            itemsWithServices.map(item => (
+              <div key={item.id}>
+                <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
+                  <CalendarDays className="w-3 h-3" /> {format(new Date(item.date + 'T12:00:00'), "EEEE, dd 'de' MMMM", { locale: ptBR })}
+                </div>
+                <div className="space-y-2">
+                  {item.assignments
+                    .filter(asg => asg.serviceType !== 'Nenhum serviço')
+                    .map(asg => {
+                    const emp = employees.find(e => e.id === asg.employeeId);
+                    return (
+                      <Card key={asg.employeeId} className={`border-l-4 ${asg.status === AssignmentStatus.COMPLETED ? 'border-l-emerald-500' : asg.status === AssignmentStatus.CANCELLED ? 'border-l-red-500' : asg.status === AssignmentStatus.RESCHEDULED ? 'border-l-amber-500' : 'border-l-slate-300'}`}>
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold bg-slate-50 text-slate-600`}>
+                              {getServiceIcon(asg.serviceType)}
+                            </div>
+                            <div>
+                              <p className="font-bold text-slate-800 text-sm">{emp?.name}</p>
+                              <p className="text-[10px] font-black uppercase tracking-tight text-slate-400">{asg.serviceType}</p>
+                            </div>
                           </div>
-                          <div>
-                            <p className="font-bold text-slate-800 text-sm">{emp?.name}</p>
-                            <p className="text-[10px] font-black uppercase tracking-tight text-slate-400">{asg.serviceType}</p>
-                          </div>
+                          <StatusBadge status={asg.status} />
                         </div>
-                        {!isNoService && <StatusBadge status={asg.status} />}
-                      </div>
-                      {asg.justification && (
-                        <p className="mt-2 text-[10px] text-slate-500 italic px-2 py-1 bg-slate-50 rounded border border-slate-100">"{asg.justification}"</p>
-                      )}
-                    </Card>
-                  );
-                })}
+                        {asg.justification && (
+                          <p className="mt-2 text-[10px] text-slate-500 italic px-2 py-1 bg-slate-50 rounded border border-slate-100">"{asg.justification}"</p>
+                        )}
+                      </Card>
+                    );
+                  })}
+                </div>
               </div>
+            ))
+          ) : (
+            <div className="text-center py-20 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200">
+              <ClipboardList className="w-12 h-12 text-slate-300 mx-auto mb-2" />
+              <p className="text-slate-400 text-sm">Nenhum serviço realizado ainda.</p>
             </div>
-          ))}
+          )}
         </div>
       </div>
     );
@@ -687,10 +744,7 @@ export default function App() {
   );
 
   const renderReports = () => {
-    // Shared state logic for period
     const filteredScale = scale.filter(s => isWithinInterval(new Date(s.date + 'T12:00:00'), currentRange));
-    
-    // General Report logic
     const generalStats = {
       [AssignmentStatus.COMPLETED]: 0,
       [AssignmentStatus.CANCELLED]: 0,
@@ -721,7 +775,6 @@ export default function App() {
           <Button variant="secondary" className="text-xs"><Download className="w-4 h-4" /> Exportar</Button>
         </div>
 
-        {/* Period Selector inside reports */}
         <div className="flex bg-white rounded-xl p-1 shadow-sm border border-slate-100 overflow-x-auto no-scrollbar">
           {(['weekly', 'monthly', 'yearly'] as PeriodFilter[]).map((p) => (
             <button key={p} onClick={() => setPeriod(p)} className={`flex-1 px-3 py-1.5 text-[10px] font-semibold rounded-lg capitalize transition-all whitespace-nowrap ${period === p ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}>
@@ -730,7 +783,6 @@ export default function App() {
           ))}
         </div>
 
-        {/* General Overview Section */}
         <div className="space-y-4">
           <h3 className="font-bold text-slate-800 text-lg flex items-center gap-2">
             <PieChartIcon className="w-5 h-5 text-blue-600" /> Relatório Geral de Serviços
@@ -755,7 +807,6 @@ export default function App() {
           </div>
         </div>
 
-        {/* Individual Report Section */}
         <div className="space-y-4">
           <h3 className="font-bold text-slate-800 text-lg flex items-center gap-2">
             <Users className="w-5 h-5 text-blue-600" /> Desempenho por Funcionário
@@ -804,7 +855,7 @@ export default function App() {
       <header className="sticky top-0 z-30 bg-slate-50/80 backdrop-blur-md px-6 py-4 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center shadow-lg shadow-blue-500/30"><ClipboardList className="text-white w-6 h-6" /></div>
-          <h1 className="text-lg font-black text-slate-800 tracking-tight">GESTOR<span className="text-blue-600">PRO</span></h1>
+          <h1 className="text-lg font-black text-slate-800 tracking-tight">Servi<span className="text-blue-600">Track</span></h1>
         </div>
       </header>
       <main className="flex-1 px-6 pt-2">
