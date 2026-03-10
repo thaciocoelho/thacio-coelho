@@ -25,7 +25,10 @@ import {
   PieChart as PieChartIcon,
   AlignLeft,
   UserPlus,
-  Filter
+  Filter,
+  Lock,
+  Bell,
+  MapPin
 } from 'lucide-react';
 import { 
   Employee, 
@@ -33,11 +36,13 @@ import {
   Absence, 
   Warning, 
   ViewTab, 
+  UserRole,
   EmployeeStatus, 
   WarningType,
   PeriodFilter,
   Assignment,
-  AssignmentStatus
+  AssignmentStatus,
+  AppNotification
 } from './types';
 import { 
   INITIAL_EMPLOYEES, 
@@ -76,6 +81,7 @@ import { ptBR } from 'date-fns/locale';
 // --- Storage Configuration ---
 const STORAGE_PREFIX = 'servitrack_v1_';
 const OLD_PREFIX = 'gpro_';
+const ADMIN_PASSWORD = 'admin123';
 
 const KEYS = {
   EMPLOYEES: 'employees',
@@ -178,6 +184,27 @@ const StatusBadge: React.FC<{ status: AssignmentStatus }> = ({ status }) => {
 // --- App Main ---
 
 export default function App() {
+  const [userRole, setUserRole] = useState<UserRole>(() => {
+    const saved = localStorage.getItem('servitrack_role');
+    return (saved as UserRole) || 'admin';
+  });
+
+  const [currentEmployeeId, setCurrentEmployeeId] = useState<string | null>(() => {
+    return localStorage.getItem('servitrack_employee_id');
+  });
+
+  useEffect(() => {
+    localStorage.setItem('servitrack_role', userRole);
+  }, [userRole]);
+
+  useEffect(() => {
+    if (currentEmployeeId) {
+      localStorage.setItem('servitrack_employee_id', currentEmployeeId);
+    } else {
+      localStorage.removeItem('servitrack_employee_id');
+    }
+  }, [currentEmployeeId]);
+
   const [activeTab, setActiveTab] = useState<ViewTab>('dashboard');
   
   // Persistence Helper
@@ -205,18 +232,29 @@ export default function App() {
   const [absences, setAbsences] = useState<Absence[]>(() => getStoredData(KEYS.ABSENCES, INITIAL_ABSENCES));
   const [warnings, setWarnings] = useState<Warning[]>(() => getStoredData(KEYS.WARNINGS, INITIAL_WARNINGS));
   const [services, setServices] = useState<string[]>(() => getStoredData(KEYS.SERVICES, SERVICE_TYPES));
+  const [notifications, setNotifications] = useState<AppNotification[]>(() => getStoredData('notifications', []));
 
   useEffect(() => { localStorage.setItem(`${STORAGE_PREFIX}${KEYS.EMPLOYEES}`, JSON.stringify(employees)); }, [employees]);
   useEffect(() => { localStorage.setItem(`${STORAGE_PREFIX}${KEYS.SCALE}`, JSON.stringify(scale)); }, [scale]);
   useEffect(() => { localStorage.setItem(`${STORAGE_PREFIX}${KEYS.ABSENCES}`, JSON.stringify(absences)); }, [absences]);
   useEffect(() => { localStorage.setItem(`${STORAGE_PREFIX}${KEYS.WARNINGS}`, JSON.stringify(warnings)); }, [warnings]);
   useEffect(() => { localStorage.setItem(`${STORAGE_PREFIX}${KEYS.SERVICES}`, JSON.stringify(services)); }, [services]);
+  useEffect(() => { localStorage.setItem(`${STORAGE_PREFIX}notifications`, JSON.stringify(notifications)); }, [notifications]);
   
   const [isEmployeeModalOpen, setIsEmployeeModalOpen] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
   const [isScaleModalOpen, setIsScaleModalOpen] = useState(false);
   const [isAbsenceModalOpen, setIsAbsenceModalOpen] = useState(false);
   const [isWarningModalOpen, setIsWarningModalOpen] = useState(false);
+  const [isNotificationModalOpen, setIsNotificationModalOpen] = useState(false);
+  const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
+  const [confirmAction, setConfirmAction] = useState<{ title: string, message: string, action: () => void } | null>(null);
+  const [isAdminLoginOpen, setIsAdminLoginOpen] = useState(false);
+  const [isEmployeeLoginOpen, setIsEmployeeLoginOpen] = useState(false);
+  const [selectedEmployeeForLogin, setSelectedEmployeeForLogin] = useState<Employee | null>(null);
+  const [employeePasswordInput, setEmployeePasswordInput] = useState('');
+  const [adminPasswordInput, setAdminPasswordInput] = useState('');
+  const [loginError, setLoginError] = useState(false);
   
   // Updated Scale Form State: Array of assignments
   const [assignmentRows, setAssignmentRows] = useState<FormAssignment[]>([]);
@@ -227,6 +265,30 @@ export default function App() {
 
   // Filter for Services tab
   const [serviceStatusFilter, setServiceStatusFilter] = useState<AssignmentStatus | 'all'>('all');
+
+  const addNotification = (notif: Omit<AppNotification, 'id' | 'date' | 'read'>) => {
+    const newNotif: AppNotification = {
+      ...notif,
+      id: Math.random().toString(36).substr(2, 9),
+      date: new Date().toISOString(),
+      read: false
+    };
+    setNotifications(prev => [newNotif, ...prev].slice(0, 50));
+  };
+
+  const triggerConfirm = (title: string, message: string, action: () => void) => {
+    setConfirmAction({ title, message, action });
+    setIsConfirmModalOpen(true);
+  };
+
+  // Automatic Cleanup of Absences: On the 1st of the month, remove absences from previous months
+  useEffect(() => {
+    const today = new Date();
+    if (today.getDate() === 1) {
+      const currentMonth = format(today, 'yyyy-MM');
+      setAbsences(prev => prev.filter(a => a.date.startsWith(currentMonth)));
+    }
+  }, []);
 
   const currentRange = useMemo(() => {
     const today = new Date();
@@ -241,11 +303,30 @@ export default function App() {
 
   const stats = useMemo(() => {
     const activeEmpCount = employees.filter(e => e.status === EmployeeStatus.ACTIVE).length;
-    const filteredScale = scale.filter(s => isWithinInterval(new Date(s.date + 'T12:00:00'), currentRange));
+    let filteredScale = scale.filter(s => isWithinInterval(new Date(s.date + 'T12:00:00'), currentRange));
+    
+    // Filter by employee if in employee mode
+    if (userRole === 'employee' && currentEmployeeId) {
+      filteredScale = filteredScale.map(s => ({
+        ...s,
+        assignments: s.assignments.filter(a => a.employeeId === currentEmployeeId)
+      })).filter(s => s.assignments.length > 0);
+    }
+
     const totalServices = filteredScale.reduce((acc, curr) => 
       acc + curr.assignments.filter(a => a.serviceType !== 'Nenhum serviço' && a.status === AssignmentStatus.COMPLETED).length, 0);
-    const filteredAbsences = absences.filter(a => isWithinInterval(new Date(a.date + 'T12:00:00'), currentRange)).length;
-    const filteredWarnings = warnings.filter(w => isWithinInterval(new Date(w.date + 'T12:00:00'), currentRange)).length;
+    
+    const filteredAbsences = absences.filter(a => {
+      const dateMatch = isWithinInterval(new Date(a.date + 'T12:00:00'), currentRange);
+      const employeeMatch = userRole === 'admin' || a.employeeId === currentEmployeeId;
+      return dateMatch && employeeMatch;
+    }).length;
+
+    const filteredWarnings = warnings.filter(w => {
+      const dateMatch = isWithinInterval(new Date(w.date + 'T12:00:00'), currentRange);
+      const employeeMatch = userRole === 'admin' || w.employeeId === currentEmployeeId;
+      return dateMatch && employeeMatch;
+    }).length;
 
     const servicesMap: Record<string, number> = {};
     filteredScale.forEach(s => {
@@ -265,9 +346,56 @@ export default function App() {
       .slice(0, 5);
 
     return { activeEmpCount, totalServices, filteredAbsences, filteredWarnings, topEmployees, totalWorkDays: filteredScale.length };
-  }, [employees, scale, absences, warnings, currentRange]);
+  }, [employees, scale, absences, warnings, currentRange, userRole, currentEmployeeId]);
 
   const [newServiceName, setNewServiceName] = useState('');
+
+  const renderNotifications = () => {
+    const filteredNotifs = notifications.filter(n => 
+      userRole === 'admin' || n.employeeId === currentEmployeeId || !n.employeeId
+    );
+
+    return (
+      <div className="space-y-4">
+        {filteredNotifs.length === 0 ? (
+          <div className="text-center py-10">
+            <Bell className="w-10 h-10 text-slate-200 mx-auto mb-2" />
+            <p className="text-slate-400 text-sm">Nenhuma notificação.</p>
+          </div>
+        ) : (
+          filteredNotifs.map(n => (
+            <button
+              key={n.id}
+              onClick={() => {
+                // Mark as read
+                setNotifications(prev => prev.map(notif => notif.id === n.id ? { ...notif, read: true } : notif));
+                // Navigate if needed
+                if (n.targetTab) setActiveTab(n.targetTab);
+                if (n.targetDate) setSelectedDate(new Date(n.targetDate + 'T12:00:00'));
+                setIsNotificationModalOpen(false);
+              }}
+              className={`w-full text-left p-4 rounded-2xl border transition-all ${n.read ? 'bg-white border-slate-100' : 'bg-blue-50/50 border-blue-100 ring-1 ring-blue-100'}`}
+            >
+              <div className="flex justify-between items-start mb-1">
+                <h4 className={`text-sm font-bold ${n.read ? 'text-slate-700' : 'text-blue-700'}`}>{n.title}</h4>
+                <span className="text-[10px] text-slate-400">{format(new Date(n.date), 'dd/MM HH:mm')}</span>
+              </div>
+              <p className="text-xs text-slate-500 line-clamp-2">{n.message}</p>
+            </button>
+          ))
+        )}
+        {filteredNotifs.length > 0 && (
+          <Button 
+            variant="ghost" 
+            className="w-full text-xs" 
+            onClick={() => setNotifications(prev => prev.map(n => ({ ...n, read: true })))}
+          >
+            Marcar todas como lidas
+          </Button>
+        )}
+      </div>
+    );
+  };
 
   const handleAddService = () => {
     const trimmed = newServiceName.trim();
@@ -303,9 +431,33 @@ export default function App() {
   };
 
   const handleDeleteEmployee = (id: string) => {
-    if (confirm('Deseja realmente excluir este funcionário?')) {
-      setEmployees(prev => prev.filter(emp => emp.id !== id));
-    }
+    triggerConfirm(
+      'Excluir Funcionário',
+      'Deseja realmente excluir este funcionário? Todos os dados vinculados serão perdidos.',
+      () => {
+        setEmployees(prev => prev.filter(emp => emp.id !== id));
+      }
+    );
+  };
+
+  const handleDeleteWarning = (id: string) => {
+    triggerConfirm(
+      'Remover Advertência',
+      'Deseja realmente remover esta advertência? Esta ação não pode ser desfeita.',
+      () => {
+        const warn = warnings.find(w => w.id === id);
+        setWarnings(prev => prev.filter(w => w.id !== id));
+        if (warn) {
+          addNotification({
+            employeeId: warn.employeeId,
+            title: 'Advertência Removida',
+            message: `Uma advertência foi removida do seu perfil.`,
+            type: 'warning_removal',
+            targetTab: 'absences'
+          });
+        }
+      }
+    );
   };
 
   const openScaleModal = () => {
@@ -327,8 +479,11 @@ export default function App() {
         employeeId: firstActiveId,
         serviceType: 'Fotos',
         status: AssignmentStatus.PENDING,
+        time: '',
+        location: '',
         justification: '',
-        description: ''
+        description: '',
+        confirmedByAdmin: true
       }]);
     }
     setIsScaleModalOpen(true);
@@ -341,8 +496,11 @@ export default function App() {
       employeeId: firstActiveId,
       serviceType: 'Fotos',
       status: AssignmentStatus.PENDING,
+      time: '',
+      location: '',
       justification: '',
-      description: ''
+      description: '',
+      confirmedByAdmin: true
     }]);
   };
 
@@ -360,6 +518,7 @@ export default function App() {
     
     const finalAssignments: Assignment[] = assignmentRows.map(({ tempId, ...rest }) => ({
       ...rest,
+      confirmedByAdmin: rest.confirmedByAdmin ?? true, // Admin saves are confirmed by default
       ...(rest.serviceType === 'Nenhum serviço' ? { status: AssignmentStatus.PENDING, justification: '', description: '' } : {})
     }));
     
@@ -373,7 +532,65 @@ export default function App() {
         return [...prev, { id: Math.random().toString(36).substr(2, 9), date, assignments: finalAssignments }];
       }
     });
+
+    // Notifications for new services
+    finalAssignments.forEach(asg => {
+      if (asg.serviceType !== 'Nenhum serviço') {
+        addNotification({
+          employeeId: asg.employeeId,
+          title: 'Novo Serviço Agendado',
+          message: `Você tem um novo serviço de ${asg.serviceType} agendado para ${format(selectedDate, 'dd/MM')}.`,
+          type: 'service',
+          targetTab: 'scale',
+          targetDate: date
+        });
+      }
+    });
+
     setIsScaleModalOpen(false);
+  };
+
+  const handleConfirmAssignment = (date: string, employeeId: string) => {
+    setScale(prev => prev.map(s => {
+      if (s.date === date) {
+        return {
+          ...s,
+          assignments: s.assignments.map(a => 
+            a.employeeId === employeeId ? { ...a, confirmedByAdmin: true } : a
+          )
+        };
+      }
+      return s;
+    }));
+
+    addNotification({
+      employeeId: employeeId,
+      title: 'Serviço Confirmado',
+      message: `O administrador confirmou o status do seu serviço em ${format(new Date(date + 'T12:00:00'), 'dd/MM')}.`,
+      type: 'service_confirmed',
+      targetTab: 'scale',
+      targetDate: date
+    });
+  };
+
+  const handleEmployeeUpdateStatus = (date: string, employeeId: string, newStatus: AssignmentStatus) => {
+    setScale(prev => prev.map(s => {
+      if (s.date === date) {
+        return {
+          ...s,
+          assignments: s.assignments.map(a => {
+            if (a.employeeId === employeeId) {
+              // Allow editing if it's pending OR if it hasn't been confirmed yet
+              // But once confirmed by admin in a non-pending state, it locks
+              if (a.confirmedByAdmin && a.status !== AssignmentStatus.PENDING) return a;
+              return { ...a, status: newStatus, confirmedByAdmin: false };
+            }
+            return a;
+          })
+        };
+      }
+      return s;
+    }));
   };
 
   const handleAddAbsence = (e: React.FormEvent<HTMLFormElement>) => {
@@ -401,71 +618,98 @@ export default function App() {
       type: formData.get('type') as WarningType
     };
     setWarnings(prev => [...prev, newWarn]);
+    
+    addNotification({
+      employeeId: newWarn.employeeId,
+      title: 'Nova Advertência Recebida',
+      message: `Você recebeu uma advertência do tipo ${newWarn.type}.`,
+      type: 'warning',
+      targetTab: 'absences'
+    });
+
     setIsWarningModalOpen(false);
   };
 
   // --- Render Functions ---
 
-  const renderDashboard = () => (
-    <div className="space-y-6 pb-24">
-      <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold text-slate-800">Resumo Geral</h2>
-        <div className="flex bg-white rounded-xl p-1 shadow-sm border border-slate-100 overflow-x-auto no-scrollbar">
-          {(['daily', 'weekly', 'monthly', 'yearly'] as PeriodFilter[]).map((p) => (
-            <button key={p} onClick={() => setPeriod(p)} className={`px-3 py-1.5 text-[10px] font-semibold rounded-lg capitalize transition-all whitespace-nowrap ${period === p ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}>
-              {p === 'daily' ? 'Diário' : p === 'weekly' ? 'Semanal' : p === 'monthly' ? 'Mensal' : 'Anual'}
-            </button>
-          ))}
+  const renderDashboard = () => {
+    const currentEmployee = employees.find(e => e.id === currentEmployeeId);
+    
+    return (
+      <div className="space-y-6 pb-24">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-2xl font-bold text-slate-800">
+              {userRole === 'admin' ? 'Resumo Geral' : `Olá, ${currentEmployee?.name.split(' ')[0]}`}
+            </h2>
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+              {userRole === 'admin' ? 'Painel de Controle' : 'Seu Relatório Individual'}
+            </p>
+          </div>
+          <div className="flex bg-white rounded-xl p-1 shadow-sm border border-slate-100 overflow-x-auto no-scrollbar">
+            {(['daily', 'weekly', 'monthly', 'yearly'] as PeriodFilter[]).map((p) => (
+              <button key={p} onClick={() => setPeriod(p)} className={`px-3 py-1.5 text-[10px] font-semibold rounded-lg capitalize transition-all whitespace-nowrap ${period === p ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}>
+                {p === 'daily' ? 'Diário' : p === 'weekly' ? 'Semanal' : p === 'monthly' ? 'Mensal' : 'Anual'}
+              </button>
+            ))}
+          </div>
         </div>
+        <div className="grid grid-cols-2 gap-4">
+          {userRole === 'admin' && (
+            <Card className="flex flex-col justify-between border-l-4 border-l-blue-500">
+              <div className="text-slate-500 text-xs font-medium uppercase tracking-wider mb-1">Funcionários</div>
+              <div className="text-2xl font-bold text-slate-800">{stats.activeEmpCount}</div>
+              <div className="mt-2 text-[10px] text-blue-600 font-semibold bg-blue-50 px-2 py-0.5 rounded-full w-fit">Ativos agora</div>
+            </Card>
+          )}
+          <Card className={`flex flex-col justify-between border-l-4 border-l-emerald-500 ${userRole === 'employee' ? 'col-span-2' : ''}`}>
+            <div className="text-slate-500 text-xs font-medium uppercase tracking-wider mb-1">Serviços Concluídos</div>
+            <div className="text-2xl font-bold text-slate-800">{stats.totalServices}</div>
+            <div className="mt-2 text-[10px] text-emerald-600 font-semibold bg-emerald-50 px-2 py-0.5 rounded-full w-fit">No período</div>
+          </Card>
+          <Card className="flex flex-col justify-between border-l-4 border-l-amber-500">
+            <div className="text-slate-500 text-xs font-medium uppercase tracking-wider mb-1">Faltas</div>
+            <div className="text-2xl font-bold text-slate-800">{stats.filteredAbsences}</div>
+            <div className="mt-2 text-[10px] text-amber-600 font-semibold bg-amber-50 px-2 py-0.5 rounded-full w-fit">Registradas</div>
+          </Card>
+          <Card className="flex flex-col justify-between border-l-4 border-l-red-500">
+            <div className="text-slate-500 text-xs font-medium uppercase tracking-wider mb-1">Advertências</div>
+            <div className="text-2xl font-bold text-slate-800">{stats.filteredWarnings}</div>
+            <div className="mt-2 text-[10px] text-red-600 font-semibold bg-red-50 px-2 py-0.5 rounded-full w-fit">Emitidas</div>
+          </Card>
+        </div>
+        
+        {userRole === 'admin' && (
+          <Card className="h-[300px]">
+            <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
+              <BarChart3 className="w-4 h-4 text-blue-600" /> Eficiência de Serviços
+            </h3>
+            <ResponsiveContainer width="100%" height="85%">
+              <BarChart data={stats.topEmployees} layout="vertical">
+                <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f5f9" />
+                <XAxis type="number" hide />
+                <YAxis dataKey="name" type="category" width={80} style={{ fontSize: '10px' }} stroke="#64748b" />
+                <Tooltip cursor={{ fill: 'transparent' }} contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
+                <Bar dataKey="count" radius={[0, 4, 4, 0]} barSize={20}>
+                  {stats.topEmployees.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'][index % 5]} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </Card>
+        )}
       </div>
-      <div className="grid grid-cols-2 gap-4">
-        <Card className="flex flex-col justify-between border-l-4 border-l-blue-500">
-          <div className="text-slate-500 text-xs font-medium uppercase tracking-wider mb-1">Funcionários</div>
-          <div className="text-2xl font-bold text-slate-800">{stats.activeEmpCount}</div>
-          <div className="mt-2 text-[10px] text-blue-600 font-semibold bg-blue-50 px-2 py-0.5 rounded-full w-fit">Ativos agora</div>
-        </Card>
-        <Card className="flex flex-col justify-between border-l-4 border-l-emerald-500">
-          <div className="text-slate-500 text-xs font-medium uppercase tracking-wider mb-1">Concluídos</div>
-          <div className="text-2xl font-bold text-slate-800">{stats.totalServices}</div>
-          <div className="mt-2 text-[10px] text-emerald-600 font-semibold bg-emerald-50 px-2 py-0.5 rounded-full w-fit">No período</div>
-        </Card>
-        <Card className="flex flex-col justify-between border-l-4 border-l-amber-500">
-          <div className="text-slate-500 text-xs font-medium uppercase tracking-wider mb-1">Faltas</div>
-          <div className="text-2xl font-bold text-slate-800">{stats.filteredAbsences}</div>
-          <div className="mt-2 text-[10px] text-amber-600 font-semibold bg-amber-50 px-2 py-0.5 rounded-full w-fit">Registradas</div>
-        </Card>
-        <Card className="flex flex-col justify-between border-l-4 border-l-red-500">
-          <div className="text-slate-500 text-xs font-medium uppercase tracking-wider mb-1">Advertências</div>
-          <div className="text-2xl font-bold text-slate-800">{stats.filteredWarnings}</div>
-          <div className="mt-2 text-[10px] text-red-600 font-semibold bg-red-50 px-2 py-0.5 rounded-full w-fit">Emitidas</div>
-        </Card>
-      </div>
-      <Card className="h-[300px]">
-        <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
-          <BarChart3 className="w-4 h-4 text-blue-600" /> Eficiência de Serviços
-        </h3>
-        <ResponsiveContainer width="100%" height="85%">
-          <BarChart data={stats.topEmployees} layout="vertical">
-            <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f5f9" />
-            <XAxis type="number" hide />
-            <YAxis dataKey="name" type="category" width={80} style={{ fontSize: '10px' }} stroke="#64748b" />
-            <Tooltip cursor={{ fill: 'transparent' }} contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
-            <Bar dataKey="count" radius={[0, 4, 4, 0]} barSize={20}>
-              {stats.topEmployees.map((entry, index) => (
-                <Cell key={`cell-${index}`} fill={['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'][index % 5]} />
-              ))}
-            </Bar>
-          </BarChart>
-        </ResponsiveContainer>
-      </Card>
-    </div>
-  );
+    );
+  };
 
   const renderEmployees = () => (
     <div className="space-y-6 pb-24">
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-bold text-slate-800">Funcionários</h2>
-        <Button onClick={() => { setEditingEmployee(null); setIsEmployeeModalOpen(true); }}><Plus className="w-4 h-4" /> Novo</Button>
+        {userRole === 'admin' && (
+          <Button onClick={() => { setEditingEmployee(null); setIsEmployeeModalOpen(true); }}><Plus className="w-4 h-4" /> Novo</Button>
+        )}
       </div>
       <div className="space-y-3">
         {employees.map(emp => (
@@ -477,10 +721,12 @@ export default function App() {
               </div>
               <div className="flex flex-col items-end gap-2">
                 <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${emp.status === EmployeeStatus.ACTIVE ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-500'}`}>{emp.status}</span>
-                <div className="flex gap-2">
-                  <button onClick={() => handleEditEmployee(emp)} className="p-1.5 bg-slate-50 text-slate-400 hover:text-blue-600 rounded-lg transition-colors"><Edit2 className="w-4 h-4" /></button>
-                  <button onClick={() => handleDeleteEmployee(emp.id)} className="p-1.5 bg-slate-50 text-slate-400 hover:text-red-600 rounded-lg transition-colors"><Trash2 className="w-4 h-4" /></button>
-                </div>
+                {userRole === 'admin' && (
+                  <div className="flex gap-2">
+                    <button onClick={() => handleEditEmployee(emp)} className="p-1.5 bg-slate-50 text-slate-400 hover:text-blue-600 rounded-lg transition-colors"><Edit2 className="w-4 h-4" /></button>
+                    <button onClick={() => handleDeleteEmployee(emp.id)} className="p-1.5 bg-slate-50 text-slate-400 hover:text-red-600 rounded-lg transition-colors"><Trash2 className="w-4 h-4" /></button>
+                  </div>
+                )}
               </div>
             </div>
           </Card>
@@ -491,7 +737,18 @@ export default function App() {
 
   const renderScale = () => {
     const days = eachDayOfInterval({ start: startOfMonth(selectedMonth), end: endOfMonth(selectedMonth) });
-    const currentDayScale = scale.filter(s => isSameDay(new Date(s.date + 'T12:00:00'), selectedDate));
+    let currentDayScale = scale.filter(s => isSameDay(new Date(s.date + 'T12:00:00'), selectedDate));
+
+    // For employees, we want to see if they are working, but also see colleagues
+    if (userRole === 'employee' && currentEmployeeId) {
+      const isWorkingThisDay = currentDayScale.some(s => s.assignments.some(a => a.employeeId === currentEmployeeId));
+      if (!isWorkingThisDay) {
+        currentDayScale = []; // Don't show anything if user isn't working? 
+        // Actually, usually users want to see the scale even if not working, 
+        // but the prompt says "ver quem estará trabalhando no mesmo dia que ele", 
+        // implying visibility when they are working.
+      }
+    }
 
     return (
       <div className="space-y-6 pb-24">
@@ -511,10 +768,29 @@ export default function App() {
           <div className="grid grid-cols-7 gap-2">
             {Array.from({ length: startOfMonth(selectedMonth).getDay() }).map((_, i) => (<div key={`fill-${i}`} />))}
             {days.map(day => {
-              const hasService = scale.some(s => isSameDay(new Date(s.date + 'T12:00:00'), day));
+              const dateStr = format(day, 'yyyy-MM-dd');
+              const dayScale = scale.find(s => s.date === dateStr);
+              
+              // Check if current user is working on this day
+              const isCurrentUserWorking = dayScale && dayScale.assignments.some(a => a.employeeId === currentEmployeeId);
+              
+              const hasService = dayScale && dayScale.assignments.some(a => 
+                userRole === 'admin' ? true : a.employeeId === currentEmployeeId
+              );
+              
               const isSelected = isSameDay(day, selectedDate);
               return (
-                <button key={day.toISOString()} onClick={() => setSelectedDate(day)} className={`relative aspect-square rounded-xl flex items-center justify-center transition-all ${isSelected ? 'bg-blue-600 text-white ring-4 ring-blue-100' : 'bg-slate-50 text-slate-700 hover:bg-slate-100'}`}>
+                <button 
+                  key={day.toISOString()} 
+                  onClick={() => setSelectedDate(day)} 
+                  className={`relative aspect-square rounded-xl flex items-center justify-center transition-all ${
+                    isSelected 
+                      ? 'bg-blue-600 text-white ring-4 ring-blue-100' 
+                      : isCurrentUserWorking && userRole === 'employee'
+                        ? 'bg-blue-50 text-blue-700 border border-blue-100'
+                        : 'bg-slate-50 text-slate-700 hover:bg-slate-100'
+                  }`}
+                >
                   <span className="text-xs font-bold">{format(day, 'd')}</span>
                   {hasService && !isSelected && (<div className="absolute bottom-1 w-1 h-1 bg-emerald-500 rounded-full" />)}
                 </button>
@@ -526,9 +802,11 @@ export default function App() {
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="font-bold text-slate-800 text-lg">Serviços do Dia</h3>
-            <Button onClick={openScaleModal} className="px-3 py-1.5 text-xs shadow-md shadow-emerald-500/10" variant="primary">
-              <Plus className="w-3.5 h-3.5" /> Adicionar / Editar
-            </Button>
+            {userRole === 'admin' && (
+              <Button onClick={openScaleModal} className="px-3 py-1.5 text-xs shadow-md shadow-emerald-500/10" variant="primary">
+                <Plus className="w-3.5 h-3.5" /> Adicionar / Editar
+              </Button>
+            )}
           </div>
           <div className="text-xs font-medium text-slate-400 mb-2">{format(selectedDate, "EEEE, dd 'de' MMMM", { locale: ptBR })}</div>
 
@@ -538,29 +816,103 @@ export default function App() {
                 {s.assignments.map((asg, idx) => {
                   const emp = employees.find(e => e.id === asg.employeeId);
                   const isNoService = asg.serviceType === 'Nenhum serviço';
+                  const needsConfirmation = userRole === 'admin' && asg.confirmedByAdmin === false;
+                  const isMe = asg.employeeId === currentEmployeeId;
+                  
+                  // If employee mode, only show colleagues if user is also working that day
+                  const userIsWorkingToday = s.assignments.some(a => a.employeeId === currentEmployeeId);
+                  if (userRole === 'employee' && !isMe && !userIsWorkingToday) return null;
+
                   return (
-                    <Card key={`${asg.employeeId}-${idx}`} className={`py-3 border-l-4 ${isNoService ? 'border-l-slate-300' : 'border-l-blue-500'}`}>
+                    <Card key={`${asg.employeeId}-${idx}`} className={`py-3 border-l-4 ${
+                      isNoService ? 'border-l-slate-300' : isMe ? 'border-l-blue-600 ring-2 ring-blue-500/5' : 'border-l-slate-400'
+                    } relative`}>
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-3">
-                          <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold text-sm ${isNoService ? 'bg-slate-100 text-slate-400' : 'bg-blue-50 text-blue-600'}`}>
+                          <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold text-sm ${
+                            isNoService ? 'bg-slate-100 text-slate-400' : isMe ? 'bg-blue-50 text-blue-600' : 'bg-slate-50 text-slate-500'
+                          }`}>
                             {getServiceIcon(asg.serviceType)}
                           </div>
                           <div>
-                            <p className="text-sm font-bold text-slate-800">{emp?.name}</p>
-                            <p className={`text-[10px] font-black uppercase tracking-widest ${isNoService ? 'text-slate-400' : 'text-blue-600'}`}>{asg.serviceType}</p>
+                            <p className="text-sm font-bold text-slate-800">
+                              {emp?.name} {isMe && <span className="text-[10px] text-blue-600 font-normal ml-1">(Você)</span>}
+                            </p>
+                            <div className="flex items-center gap-2 mt-0.5">
+                              <p className={`text-[10px] font-black uppercase tracking-widest ${isNoService ? 'text-slate-400' : isMe ? 'text-blue-600' : 'text-slate-500'}`}>{asg.serviceType}</p>
+                              {asg.time && (
+                                <span className="flex items-center gap-1 text-[10px] font-bold text-slate-400">
+                                  <Clock className="w-3 h-3" /> {asg.time}
+                                </span>
+                              )}
+                            </div>
                           </div>
                         </div>
-                        {!isNoService && <StatusBadge status={asg.status} />}
+                        <div className="flex flex-col items-end gap-2">
+                          {!isNoService && <StatusBadge status={asg.status} />}
+                          {asg.confirmedByAdmin === false && (
+                            <span className="text-[8px] font-bold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded uppercase">Aguardando OK</span>
+                          )}
+                        </div>
                       </div>
+
+                      {asg.location && (
+                        <div className="mt-3 flex items-center justify-between bg-slate-50 p-2 rounded-xl border border-slate-100">
+                          <div className="flex items-center gap-2 overflow-hidden">
+                            <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                            <p className="text-[10px] text-slate-600 truncate font-medium">{asg.location}</p>
+                          </div>
+                          <button 
+                            onClick={() => window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(asg.location!)}`, '_blank')}
+                            className="flex items-center gap-1 text-[9px] font-bold text-blue-600 bg-blue-50 px-2 py-1 rounded-lg hover:bg-blue-100 transition-colors"
+                          >
+                            GPS
+                          </button>
+                        </div>
+                      )}
+
+                      {userRole === 'employee' && isMe && !isNoService && (
+                        <div className="mt-4 pt-4 border-t border-slate-100">
+                          <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2">
+                            {(asg.confirmedByAdmin && asg.status !== AssignmentStatus.PENDING) ? 'Status Confirmado pelo Admin' : 'Atualizar Status'}
+                          </label>
+                          <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
+                            {Object.values(AssignmentStatus).map(status => {
+                              const isLocked = asg.confirmedByAdmin && asg.status !== AssignmentStatus.PENDING;
+                              return (
+                                <button
+                                  key={status}
+                                  disabled={isLocked}
+                                  onClick={() => handleEmployeeUpdateStatus(s.date, asg.employeeId, status)}
+                                  className={`px-3 py-1.5 rounded-lg text-[10px] font-bold border transition-all whitespace-nowrap ${
+                                    asg.status === status 
+                                      ? 'bg-blue-600 text-white border-blue-600' 
+                                      : 'bg-white text-slate-500 border-slate-200'
+                                  } ${isLocked ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                >
+                                  {status}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {needsConfirmation && (
+                        <div className="mt-4 pt-4 border-t border-slate-100 flex justify-end">
+                          <Button 
+                            onClick={() => handleConfirmAssignment(s.date, asg.employeeId)}
+                            className="text-[10px] py-1 px-3 bg-emerald-600"
+                          >
+                            Dar OK no Status
+                          </Button>
+                        </div>
+                      )}
+
                       {asg.description && (
                         <div className="mt-2 text-[10px] text-slate-500 bg-slate-50 p-2 rounded-lg border border-slate-100 flex items-start gap-1.5">
                           <AlignLeft className="w-3 h-3 mt-0.5 shrink-0 opacity-50" />
                           <p className="leading-relaxed">{asg.description}</p>
-                        </div>
-                      )}
-                      {asg.justification && (
-                        <div className="mt-2 text-[10px] text-red-500 bg-red-50/50 p-2 rounded-lg italic border border-red-100">
-                          Justificativa: {asg.justification}
                         </div>
                       )}
                     </Card>
@@ -651,6 +1003,30 @@ export default function App() {
                           </div>
                         )}
                       </div>
+
+                      {!isNoService && (
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Hora</label>
+                            <input 
+                              type="time"
+                              value={row.time || ''}
+                              onChange={(e) => updateAssignmentRow(row.tempId, { time: e.target.value })}
+                              className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Local</label>
+                            <input 
+                              type="text"
+                              value={row.location || ''}
+                              onChange={(e) => updateAssignmentRow(row.tempId, { location: e.target.value })}
+                              placeholder="Endereço ou Nome do Local"
+                              className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs"
+                            />
+                          </div>
+                        </div>
+                      )}
                       
                       {!isNoService && (
                         <div className="animate-in fade-in zoom-in-95 duration-200">
@@ -700,13 +1076,14 @@ export default function App() {
   };
 
   const renderServices = () => {
-    const filteredScale = scale
+    let filteredScale = scale
       .map(item => ({
         ...item,
         assignments: item.assignments.filter(asg => {
           const isNotNone = asg.serviceType !== 'Nenhum serviço';
           const matchesStatus = serviceStatusFilter === 'all' || asg.status === serviceStatusFilter;
-          return isNotNone && matchesStatus;
+          const matchesEmployee = userRole === 'admin' || asg.employeeId === currentEmployeeId;
+          return isNotNone && matchesStatus && matchesEmployee;
         })
       }))
       .filter(item => item.assignments.length > 0)
@@ -796,7 +1173,9 @@ export default function App() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-bold text-slate-800 text-red-600">Faltas</h2>
-        <Button onClick={() => setIsAbsenceModalOpen(true)} variant="danger"><Plus className="w-4 h-4" /> Registrar</Button>
+        {userRole === 'admin' && (
+          <Button onClick={() => setIsAbsenceModalOpen(true)} variant="danger"><Plus className="w-4 h-4" /> Registrar</Button>
+        )}
       </div>
       <div className="space-y-4">
         {absences.length === 0 ? (
@@ -823,7 +1202,9 @@ export default function App() {
     <div className="space-y-6 pt-6 border-t border-slate-200">
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-bold text-slate-800 text-amber-600">Advertências</h2>
-        <Button onClick={() => setIsWarningModalOpen(true)} variant="warning"><Plus className="w-4 h-4" /> Registrar</Button>
+        {userRole === 'admin' && (
+          <Button onClick={() => setIsWarningModalOpen(true)} variant="warning"><Plus className="w-4 h-4" /> Registrar</Button>
+        )}
       </div>
       <div className="space-y-4">
         {warnings.length === 0 ? (
@@ -831,16 +1212,34 @@ export default function App() {
         ) : (
           warnings.sort((a, b) => b.date.localeCompare(a.date)).map(warn => {
             const emp = employees.find(e => e.id === warn.employeeId);
+            const warnDate = new Date(warn.date + 'T12:00:00');
+            const diffTime = Math.abs(new Date().getTime() - warnDate.getTime());
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            const isExpired = diffDays >= 30;
+
             return (
-              <Card key={warn.id} className="border-l-4 border-l-amber-500">
+              <Card key={warn.id} className={`border-l-4 ${isExpired ? 'border-l-red-500 bg-red-50/30' : 'border-l-amber-500'}`}>
                 <div className="flex justify-between items-start mb-2">
                   <div>
                     <h4 className="font-bold text-slate-800">{emp?.name}</h4>
-                    <p className="text-xs text-slate-500">{format(new Date(warn.date + 'T12:00:00'), 'dd/MM/yyyy')}</p>
+                    <p className="text-xs text-slate-500">
+                      {format(new Date(warn.date + 'T12:00:00'), 'dd/MM/yyyy')}
+                      {isExpired && <span className="ml-2 text-red-600 font-bold">(Expirada - 30+ dias)</span>}
+                    </p>
                   </div>
-                  <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-amber-100 text-amber-700 uppercase">
-                    {warn.type}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-amber-100 text-amber-700 uppercase">
+                      {warn.type}
+                    </span>
+                    {userRole === 'admin' && (
+                      <button 
+                        onClick={() => handleDeleteWarning(warn.id)}
+                        className="p-1 text-slate-300 hover:text-red-500 transition-colors"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <p className="text-sm text-slate-600 italic bg-slate-50 p-2 rounded-lg">"{warn.reason}"</p>
               </Card>
@@ -949,14 +1348,159 @@ export default function App() {
     );
   };
 
-  const tabs: { id: ViewTab, label: string, icon: React.ReactNode }[] = [
-    { id: 'dashboard', label: 'Início', icon: <LayoutDashboard className="w-6 h-6" /> },
-    { id: 'employees', label: 'Equipe', icon: <Users className="w-6 h-6" /> },
-    { id: 'scale', label: 'Escala', icon: <CalendarDays className="w-6 h-6" /> },
-    { id: 'services', label: 'Serviços', icon: <ClipboardList className="w-6 h-6" /> },
-    { id: 'absences', label: 'Faltas/Adv', icon: <AlertTriangle className="w-6 h-6" /> },
-    { id: 'reports', label: 'Relatórios', icon: <BarChart3 className="w-6 h-6" /> }
-  ];
+  const tabs: { id: ViewTab, label: string, icon: React.ReactNode }[] = useMemo(() => {
+    const baseTabs = [
+      { id: 'dashboard', label: 'Início', icon: <LayoutDashboard className="w-6 h-6" /> },
+      { id: 'scale', label: 'Escala', icon: <CalendarDays className="w-6 h-6" /> },
+      { id: 'services', label: 'Serviços', icon: <ClipboardList className="w-6 h-6" /> },
+    ];
+
+    if (userRole === 'admin') {
+      return [
+        ...baseTabs,
+        { id: 'employees', label: 'Equipe', icon: <Users className="w-6 h-6" /> },
+        { id: 'absences', label: 'RH', icon: <AlertTriangle className="w-6 h-6" /> },
+        { id: 'reports', label: 'Relatórios', icon: <BarChart3 className="w-6 h-6" /> }
+      ];
+    }
+
+    return baseTabs;
+  }, [userRole]);
+
+  const handleSwitchRole = () => {
+    if (userRole === 'admin') {
+      setUserRole('employee');
+      setActiveTab('dashboard');
+    } else {
+      setAdminPasswordInput('');
+      setLoginError(false);
+      setIsAdminLoginOpen(true);
+    }
+  };
+
+  const handleAdminLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (adminPasswordInput === ADMIN_PASSWORD) {
+      setUserRole('admin');
+      setCurrentEmployeeId(null);
+      setActiveTab('dashboard');
+      setIsAdminLoginOpen(false);
+    } else {
+      setLoginError(true);
+    }
+  };
+
+  const handleEmployeeLoginClick = (emp: Employee) => {
+    setSelectedEmployeeForLogin(emp);
+    setEmployeePasswordInput('');
+    setLoginError(false);
+    setIsEmployeeLoginOpen(true);
+  };
+
+  const handleEmployeeLoginSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedEmployeeForLogin) return;
+
+    if (!selectedEmployeeForLogin.password) {
+      // Registration mode
+      if (employeePasswordInput.length < 4) {
+        alert('A senha deve ter pelo menos 4 caracteres.');
+        return;
+      }
+      setEmployees(prev => prev.map(e => 
+        e.id === selectedEmployeeForLogin.id ? { ...e, password: employeePasswordInput } : e
+      ));
+      setCurrentEmployeeId(selectedEmployeeForLogin.id);
+      setIsEmployeeLoginOpen(false);
+    } else {
+      // Login mode
+      if (employeePasswordInput === selectedEmployeeForLogin.password) {
+        setCurrentEmployeeId(selectedEmployeeForLogin.id);
+        setIsEmployeeLoginOpen(false);
+      } else {
+        setLoginError(true);
+      }
+    }
+  };
+
+  if (userRole === 'employee' && !currentEmployeeId) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6">
+        <div className="w-full max-w-sm space-y-8">
+          <div className="text-center">
+            <div className="w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center shadow-xl shadow-blue-500/30 mx-auto mb-4">
+              <Users className="text-white w-8 h-8" />
+            </div>
+            <h1 className="text-2xl font-black text-slate-800 tracking-tight">Acesso <span className="text-blue-600">Equipe</span></h1>
+            <p className="text-slate-500 text-sm mt-2">Selecione seu nome para entrar</p>
+          </div>
+          
+          <div className="space-y-3">
+            {employees.filter(e => e.status === EmployeeStatus.ACTIVE).map(emp => (
+              <button
+                key={emp.id}
+                onClick={() => handleEmployeeLoginClick(emp)}
+                className="w-full bg-white p-4 rounded-2xl border border-slate-100 shadow-sm flex items-center gap-4 hover:border-blue-500 transition-all active:scale-95 text-left"
+              >
+                <div className="w-10 h-10 bg-slate-50 text-slate-600 rounded-xl flex items-center justify-center font-bold">
+                  {emp.name.charAt(0)}
+                </div>
+                <div className="flex-1">
+                  <p className="font-bold text-slate-800">{emp.name}</p>
+                  <p className="text-xs text-slate-400">{emp.position}</p>
+                </div>
+                {!emp.password && (
+                  <span className="text-[8px] font-bold text-blue-600 bg-blue-50 px-2 py-1 rounded-full uppercase">Primeiro Acesso</span>
+                )}
+              </button>
+            ))}
+          </div>
+
+          <button 
+            onClick={handleSwitchRole}
+            className="w-full text-slate-400 text-xs font-bold hover:text-slate-600 transition-colors"
+          >
+            Voltar para Modo Admin
+          </button>
+        </div>
+
+        <Modal 
+          title={selectedEmployeeForLogin?.password ? "Acesso Funcionário" : "Criar Senha de Acesso"} 
+          isOpen={isEmployeeLoginOpen} 
+          onClose={() => setIsEmployeeLoginOpen(false)}
+        >
+          <form onSubmit={handleEmployeeLoginSubmit} className="space-y-4">
+            <div className="text-center mb-4">
+              <p className="text-sm font-bold text-slate-800">{selectedEmployeeForLogin?.name}</p>
+              <p className="text-xs text-slate-500">
+                {selectedEmployeeForLogin?.password 
+                  ? "Digite sua senha para acessar seu perfil" 
+                  : "Crie uma senha de acesso para proteger seus dados"}
+              </p>
+            </div>
+            
+            <div>
+              <input 
+                type="password"
+                value={employeePasswordInput}
+                onChange={(e) => { setEmployeePasswordInput(e.target.value); setLoginError(false); }}
+                placeholder={selectedEmployeeForLogin?.password ? "Sua senha" : "Nova senha (mín. 4 dígitos)"}
+                autoFocus
+                className={`w-full bg-slate-50 border ${loginError ? 'border-red-500 ring-2 ring-red-500/10' : 'border-slate-200'} rounded-2xl px-4 py-3 text-center text-lg font-bold focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all`}
+              />
+              {loginError && (
+                <p className="text-[10px] font-bold text-red-500 text-center mt-2 uppercase tracking-wider">Senha Incorreta</p>
+              )}
+            </div>
+
+            <Button type="submit" className="w-full py-4 text-sm font-bold shadow-lg shadow-blue-500/20">
+              {selectedEmployeeForLogin?.password ? "Entrar" : "Criar Senha e Entrar"}
+            </Button>
+          </form>
+        </Modal>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen max-w-md mx-auto relative bg-slate-50 flex flex-col">
@@ -965,22 +1509,97 @@ export default function App() {
           <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center shadow-lg shadow-blue-500/30"><ClipboardList className="text-white w-6 h-6" /></div>
           <h1 className="text-lg font-black text-slate-800 tracking-tight">Servi<span className="text-blue-600">Track</span></h1>
         </div>
+        <div className="flex items-center gap-3">
+          <div className="relative">
+            <button 
+              onClick={() => setIsNotificationModalOpen(true)}
+              className="p-2 bg-white rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors relative"
+            >
+              <Bell className="w-5 h-5" />
+              {notifications.filter(n => !n.read && (userRole === 'admin' || n.employeeId === currentEmployeeId)).length > 0 && (
+                <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white text-[8px] font-bold rounded-full flex items-center justify-center ring-2 ring-slate-50">
+                  {notifications.filter(n => !n.read && (userRole === 'admin' || n.employeeId === currentEmployeeId)).length}
+                </span>
+              )}
+            </button>
+          </div>
+          <button 
+            onClick={handleSwitchRole}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-full border transition-all ${
+              userRole === 'admin' 
+                ? 'bg-amber-50 border-amber-200 text-amber-700' 
+                : 'bg-blue-50 border-blue-200 text-blue-700'
+            }`}
+          >
+            {userRole === 'admin' ? <Edit2 className="w-3 h-3" /> : <Users className="w-3 h-3" />}
+            <span className="text-[10px] font-bold uppercase tracking-tight">
+              {userRole === 'admin' ? 'Modo Admin' : 'Modo Acesso'}
+            </span>
+          </button>
+        </div>
       </header>
       <main className="flex-1 px-6 pt-2">
         {activeTab === 'dashboard' && renderDashboard()}
-        {activeTab === 'employees' && renderEmployees()}
+        {activeTab === 'employees' && userRole === 'admin' && renderEmployees()}
         {activeTab === 'scale' && renderScale()}
         {activeTab === 'services' && renderServices()}
-        {activeTab === 'absences' && (
+        {activeTab === 'absences' && userRole === 'admin' && (
           <div className="space-y-8 pb-24">
             {renderAbsences()}
             {renderWarnings()}
           </div>
         )}
-        {activeTab === 'reports' && renderReports()}
+        {activeTab === 'reports' && userRole === 'admin' && renderReports()}
       </main>
       
       {/* Modals */}
+      <Modal title="Notificações" isOpen={isNotificationModalOpen} onClose={() => setIsNotificationModalOpen(false)}>
+        {renderNotifications()}
+      </Modal>
+
+      <Modal 
+        title={confirmAction?.title || "Confirmar"} 
+        isOpen={isConfirmModalOpen} 
+        onClose={() => setIsConfirmModalOpen(false)}
+      >
+        <div className="space-y-6">
+          <p className="text-slate-600 text-sm">{confirmAction?.message}</p>
+          <div className="flex gap-3">
+            <Button variant="secondary" onClick={() => setIsConfirmModalOpen(false)} className="flex-1">Cancelar</Button>
+            <Button variant="danger" onClick={() => { confirmAction?.action(); setIsConfirmModalOpen(false); }} className="flex-1">Confirmar</Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal title="Login Administrativo" isOpen={isAdminLoginOpen} onClose={() => setIsAdminLoginOpen(false)}>
+        <form onSubmit={handleAdminLogin} className="space-y-4">
+          <div className="text-center mb-4">
+            <div className="w-12 h-12 bg-amber-100 text-amber-600 rounded-2xl flex items-center justify-center mx-auto mb-2">
+              <Lock className="w-6 h-6" />
+            </div>
+            <p className="text-sm text-slate-500">Digite a senha para acessar as funções de gerente</p>
+          </div>
+          
+          <div>
+            <input 
+              type="password"
+              value={adminPasswordInput}
+              onChange={(e) => { setAdminPasswordInput(e.target.value); setLoginError(false); }}
+              placeholder="Senha de acesso"
+              autoFocus
+              className={`w-full bg-slate-50 border ${loginError ? 'border-red-500 ring-2 ring-red-500/10' : 'border-slate-200'} rounded-2xl px-4 py-3 text-center text-lg font-bold focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all`}
+            />
+            {loginError && (
+              <p className="text-[10px] font-bold text-red-500 text-center mt-2 uppercase tracking-wider">Senha Incorreta</p>
+            )}
+          </div>
+
+          <Button type="submit" className="w-full py-4 text-sm font-bold shadow-lg shadow-blue-500/20">
+            Acessar Painel
+          </Button>
+        </form>
+      </Modal>
+
       <Modal 
         title={editingEmployee ? "Editar Funcionário" : "Novo Funcionário"} 
         isOpen={isEmployeeModalOpen} 

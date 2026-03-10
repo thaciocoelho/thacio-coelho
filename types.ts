@@ -18,14 +18,18 @@ export interface Employee {
   admissionDate: string;
   status: EmployeeStatus;
   notes: string;
+  password?: string;
 }
 
 export interface Assignment {
   employeeId: string;
   serviceType: string;
   status: AssignmentStatus;
+  time?: string;
+  location?: string;
   justification?: string;
   description?: string;
+  confirmedByAdmin?: boolean;
 }
 
 export interface ScaleItem {
@@ -57,5 +61,18 @@ export interface Warning {
 }
 
 export type ViewTab = 'dashboard' | 'employees' | 'scale' | 'services' | 'absences' | 'warnings' | 'reports';
+export type UserRole = 'admin' | 'employee';
 
 export type PeriodFilter = 'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom';
+
+export interface AppNotification {
+  id: string;
+  employeeId?: string; // If null, it's for everyone or admin
+  title: string;
+  message: string;
+  date: string;
+  read: boolean;
+  type: 'service' | 'warning' | 'warning_removal' | 'service_confirmed';
+  targetTab?: ViewTab;
+  targetDate?: string;
+}
