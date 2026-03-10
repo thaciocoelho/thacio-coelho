@@ -81,7 +81,8 @@ const KEYS = {
   EMPLOYEES: 'employees',
   SCALE: 'scale',
   ABSENCES: 'absences',
-  WARNINGS: 'warnings'
+  WARNINGS: 'warnings',
+  SERVICES: 'services'
 };
 
 interface FormAssignment extends Assignment {
@@ -203,11 +204,13 @@ export default function App() {
   const [scale, setScale] = useState<ScaleItem[]>(() => getStoredData(KEYS.SCALE, INITIAL_SCALE));
   const [absences, setAbsences] = useState<Absence[]>(() => getStoredData(KEYS.ABSENCES, INITIAL_ABSENCES));
   const [warnings, setWarnings] = useState<Warning[]>(() => getStoredData(KEYS.WARNINGS, INITIAL_WARNINGS));
+  const [services, setServices] = useState<string[]>(() => getStoredData(KEYS.SERVICES, SERVICE_TYPES));
 
   useEffect(() => { localStorage.setItem(`${STORAGE_PREFIX}${KEYS.EMPLOYEES}`, JSON.stringify(employees)); }, [employees]);
   useEffect(() => { localStorage.setItem(`${STORAGE_PREFIX}${KEYS.SCALE}`, JSON.stringify(scale)); }, [scale]);
   useEffect(() => { localStorage.setItem(`${STORAGE_PREFIX}${KEYS.ABSENCES}`, JSON.stringify(absences)); }, [absences]);
   useEffect(() => { localStorage.setItem(`${STORAGE_PREFIX}${KEYS.WARNINGS}`, JSON.stringify(warnings)); }, [warnings]);
+  useEffect(() => { localStorage.setItem(`${STORAGE_PREFIX}${KEYS.SERVICES}`, JSON.stringify(services)); }, [services]);
   
   const [isEmployeeModalOpen, setIsEmployeeModalOpen] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
@@ -264,6 +267,16 @@ export default function App() {
     return { activeEmpCount, totalServices, filteredAbsences, filteredWarnings, topEmployees, totalWorkDays: filteredScale.length };
   }, [employees, scale, absences, warnings, currentRange]);
 
+  const [newServiceName, setNewServiceName] = useState('');
+
+  const handleAddService = () => {
+    const trimmed = newServiceName.trim();
+    if (trimmed && !services.includes(trimmed)) {
+      setServices(prev => [...prev, trimmed]);
+      setNewServiceName('');
+    }
+  };
+
   const handleSaveEmployee = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
@@ -296,20 +309,33 @@ export default function App() {
   };
 
   const openScaleModal = () => {
-    const existingScale = scale.find(s => s.date === format(selectedDate, 'yyyy-MM-dd'));
-    if (existingScale && existingScale.assignments.length > 0) {
-      setAssignmentRows(existingScale.assignments.map(asg => ({
+    // Bring history: Find existing assignments for the selected date
+    const dateStr = format(selectedDate, 'yyyy-MM-dd');
+    const existingDayScale = scale.find(s => s.date === dateStr);
+    
+    if (existingDayScale && existingDayScale.assignments.length > 0) {
+      // Map existing assignments to form rows with tempIds
+      setAssignmentRows(existingDayScale.assignments.map(asg => ({
         ...asg,
         tempId: Math.random().toString(36).substr(2, 9)
       })));
     } else {
-      addAssignmentRow();
+      // If no history, start with one clean default row
+      const firstActiveId = employees.find(e => e.status === EmployeeStatus.ACTIVE)?.id || employees[0]?.id || '';
+      setAssignmentRows([{
+        tempId: Math.random().toString(36).substr(2, 9),
+        employeeId: firstActiveId,
+        serviceType: 'Fotos',
+        status: AssignmentStatus.PENDING,
+        justification: '',
+        description: ''
+      }]);
     }
     setIsScaleModalOpen(true);
   };
 
   const addAssignmentRow = () => {
-    const firstActiveId = employees.find(e => e.status === EmployeeStatus.ACTIVE)?.id || '';
+    const firstActiveId = employees.find(e => e.status === EmployeeStatus.ACTIVE)?.id || employees[0]?.id || '';
     setAssignmentRows(prev => [...prev, {
       tempId: Math.random().toString(36).substr(2, 9),
       employeeId: firstActiveId,
@@ -551,6 +577,26 @@ export default function App() {
         </div>
 
         <Modal title={`Agendar: ${format(selectedDate, "dd/MM/yyyy")}`} isOpen={isScaleModalOpen} onClose={() => setIsScaleModalOpen(false)}>
+          <div className="mb-6 p-4 bg-blue-50/50 rounded-2xl border border-blue-100">
+            <label className="block text-[10px] font-bold text-blue-600 uppercase mb-2">Cadastrar Novo Tipo de Serviço</label>
+            <div className="flex gap-2">
+              <input 
+                type="text"
+                value={newServiceName}
+                onChange={(e) => setNewServiceName(e.target.value)}
+                placeholder="Ex: Drone FPV, Social Media..."
+                className="flex-1 bg-white border border-blue-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+              />
+              <Button 
+                onClick={handleAddService}
+                className="py-2 px-4 text-xs h-full"
+                disabled={!newServiceName.trim()}
+              >
+                Cadastrar
+              </Button>
+            </div>
+          </div>
+
           <form onSubmit={handleSaveScale} className="space-y-6">
             <div className="space-y-4">
               {assignmentRows.map((row) => {
@@ -589,7 +635,7 @@ export default function App() {
                             onChange={(e) => updateAssignmentRow(row.tempId, { serviceType: e.target.value })}
                             className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs"
                           >
-                            {SERVICE_TYPES.map(st => (<option key={st} value={st}>{st}</option>))}
+                            {services.map(st => (<option key={st} value={st}>{st}</option>))}
                           </select>
                         </div>
                         {!isNoService && (
