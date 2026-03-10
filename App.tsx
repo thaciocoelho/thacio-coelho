@@ -1178,10 +1178,16 @@ export default function App() {
         )}
       </div>
       <div className="space-y-4">
-        {absences.length === 0 ? (
-          <p className="text-sm text-slate-400 text-center py-4">Nenhuma falta registrada.</p>
-        ) : (
-          absences.sort((a, b) => b.date.localeCompare(a.date)).map(abs => {
+        {(() => {
+          const filteredAbsences = userRole === 'admin' 
+            ? absences 
+            : absences.filter(a => a.employeeId === currentEmployeeId);
+          
+          if (filteredAbsences.length === 0) {
+            return <p className="text-sm text-slate-400 text-center py-4">Nenhuma falta registrada.</p>;
+          }
+
+          return filteredAbsences.sort((a, b) => b.date.localeCompare(a.date)).map(abs => {
             const emp = employees.find(e => e.id === abs.employeeId);
             return (
               <Card key={abs.id} className="border-l-4 border-l-red-500">
@@ -1192,8 +1198,8 @@ export default function App() {
                 <p className="text-sm text-slate-600 italic bg-slate-50 p-2 rounded-lg">"{abs.reason}"</p>
               </Card>
             );
-          })
-        )}
+          });
+        })()}
       </div>
     </div>
   );
@@ -1207,10 +1213,16 @@ export default function App() {
         )}
       </div>
       <div className="space-y-4">
-        {warnings.length === 0 ? (
-          <p className="text-sm text-slate-400 text-center py-4">Nenhuma advertência registrada.</p>
-        ) : (
-          warnings.sort((a, b) => b.date.localeCompare(a.date)).map(warn => {
+        {(() => {
+          const filteredWarnings = userRole === 'admin' 
+            ? warnings 
+            : warnings.filter(w => w.employeeId === currentEmployeeId);
+
+          if (filteredWarnings.length === 0) {
+            return <p className="text-sm text-slate-400 text-center py-4">Nenhuma advertência registrada.</p>;
+          }
+
+          return filteredWarnings.sort((a, b) => b.date.localeCompare(a.date)).map(warn => {
             const emp = employees.find(e => e.id === warn.employeeId);
             const warnDate = new Date(warn.date + 'T12:00:00');
             const diffTime = Math.abs(new Date().getTime() - warnDate.getTime());
@@ -1244,8 +1256,8 @@ export default function App() {
                 <p className="text-sm text-slate-600 italic bg-slate-50 p-2 rounded-lg">"{warn.reason}"</p>
               </Card>
             );
-          })
-        )}
+          });
+        })()}
       </div>
     </div>
   );
@@ -1364,7 +1376,10 @@ export default function App() {
       ];
     }
 
-    return baseTabs;
+    return [
+      ...baseTabs,
+      { id: 'absences', label: 'Advertências', icon: <AlertTriangle className="w-6 h-6" /> }
+    ];
   }, [userRole]);
 
   const handleSwitchRole = () => {
@@ -1543,7 +1558,7 @@ export default function App() {
         {activeTab === 'employees' && userRole === 'admin' && renderEmployees()}
         {activeTab === 'scale' && renderScale()}
         {activeTab === 'services' && renderServices()}
-        {activeTab === 'absences' && userRole === 'admin' && (
+        {activeTab === 'absences' && (
           <div className="space-y-8 pb-24">
             {renderAbsences()}
             {renderWarnings()}
