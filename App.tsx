@@ -30,6 +30,8 @@ import {
   Bell,
   MapPin
 } from 'lucide-react';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import { 
   Employee, 
   ScaleItem, 
@@ -1287,11 +1289,74 @@ export default function App() {
       return { ...emp, services, absCount, warnCount };
     });
 
+    const handleExportReport = () => {
+      const doc = new jsPDF();
+      
+      // Title
+      doc.setFontSize(20);
+      doc.setTextColor(30, 41, 59); // slate-800
+      doc.text("Relatório Servitrack", 14, 22);
+      
+      // Meta info
+      doc.setFontSize(10);
+      doc.setTextColor(100, 116, 139); // slate-500
+      const periodLabel = period === 'weekly' ? 'Semanal' : period === 'monthly' ? 'Mensal' : 'Anual';
+      doc.text(`Período: ${periodLabel}`, 14, 30);
+      doc.text(`Data de Geração: ${format(new Date(), 'dd/MM/yyyy HH:mm')}`, 14, 35);
+
+      // General Stats
+      doc.setFontSize(14);
+      doc.setTextColor(30, 41, 59);
+      doc.text("Resumo Geral de Serviços", 14, 50);
+      
+      autoTable(doc, {
+        startY: 55,
+        head: [['Status', 'Quantidade']],
+        body: [
+          ['Concluídos', generalStats[AssignmentStatus.COMPLETED].toString()],
+          ['Cancelados', generalStats[AssignmentStatus.CANCELLED].toString()],
+          ['Reagendados', generalStats[AssignmentStatus.RESCHEDULED].toString()],
+          ['Pendentes', generalStats[AssignmentStatus.PENDING].toString()],
+        ],
+        theme: 'striped',
+        headStyles: { fillColor: [37, 99, 235] }, // blue-600
+      });
+
+      // Employee Performance
+      doc.setFontSize(14);
+      doc.text("Desempenho por Funcionário", 14, (doc as any).lastAutoTable.finalY + 15);
+
+      const tableHeaders = [["Nome", "Cargo", "Serviços", "Faltas", "Adv."]];
+      const tableData = reportData.map(data => [
+        data.name,
+        data.position,
+        data.services.toString(),
+        data.absCount.toString(),
+        data.warnCount.toString()
+      ]);
+
+      autoTable(doc, {
+        startY: (doc as any).lastAutoTable.finalY + 20,
+        head: tableHeaders,
+        body: tableData,
+        theme: 'grid',
+        headStyles: { fillColor: [30, 41, 59] }, // slate-800
+        styles: { fontSize: 9 },
+        columnStyles: {
+          2: { halign: 'center' },
+          3: { halign: 'center' },
+          4: { halign: 'center' },
+        }
+      });
+
+      doc.save(`relatorio_servitrack_${period}_${format(new Date(), 'dd-MM-yyyy')}.pdf`);
+    };
+
     return (
       <div className="space-y-6 pb-24">
         <div className="flex items-center justify-between">
           <h2 className="text-2xl font-bold text-slate-800">Relatórios</h2>
-          <Button variant="secondary" className="text-xs"><Download className="w-4 h-4" /> Exportar</Button>
+          <Button onClick={handleExportReport} variant="secondary" className="text-xs"><Download className="w-4 h-4" /> Exportar</Button>
         </div>
 
         <div className="flex bg-white rounded-xl p-1 shadow-sm border border-slate-100 overflow-x-auto no-scrollbar">
