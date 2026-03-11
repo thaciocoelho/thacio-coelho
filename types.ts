@@ -60,6 +60,24 @@ export interface Warning {
   type: WarningType;
 }
 
+export interface UserAccount {
+  id: string;
+  name: string;
+  email: string;
+  cpf: string;
+  password?: string;
+  role: UserRole;
+}
+
+export interface EmployeeInvitation {
+  id: string;
+  employeeId: string;
+  token: string;
+  createdAt: string;
+  expiresAt?: string;
+  used: boolean;
+}
+
 export type ViewTab = 'dashboard' | 'employees' | 'scale' | 'services' | 'absences' | 'warnings' | 'reports';
 export type UserRole = 'admin' | 'employee';
 
